@@ -113,8 +113,11 @@ export interface AssetTransferVoucherRecord {
   createdAt?: unknown;
 }
 
+let opSeqCounter = 0;
+
 function genId(prefix: string): string {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  opSeqCounter = (opSeqCounter + 1) % 100000;
+  return `${prefix}_${Date.now()}_${opSeqCounter}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
 export function generateVoucherNumber(prefix: 'ENT' | 'ISS' | 'RET' | 'TRN'): string {
@@ -276,6 +279,9 @@ export interface NewDeviceEntryLine {
   serialNumber?: string;
   warrantyPeriod?: string;
   storageLocation?: string;
+  receivedDate?: string;
+  technicalStatus?: string;
+  notes?: string;
 }
 
 export interface ConsumableReplenishLine {
@@ -367,125 +373,149 @@ export async function executeStockEntry(params: {
     createdAt: serverTimestamp(),
   };
 
+  const DEVICE_CHUNK_SIZE = 80;
+  const deviceChunks: Array<typeof preparedDevices> = [];
+  for (let i = 0; i < preparedDevices.length; i += DEVICE_CHUNK_SIZE) {
+    deviceChunks.push(preparedDevices.slice(i, i + DEVICE_CHUNK_SIZE));
+  }
+  if (deviceChunks.length === 0) {
+    deviceChunks.push([]);
+  }
+
   try {
-    await runTransaction(db, async (tx) => {
-      // 1. READS FIRST
-      for (const dev of preparedDevices) {
-        const idxSnap = await tx.get(doc(db, 'barcodeIndex', dev.indexKey));
-        if (idxSnap.exists()) {
-          throw new Error(`رقم الجرد "${dev.inv}" محجوز مسبقاً في قاعدة البيانات.`);
+    for (let chunkIdx = 0; chunkIdx < deviceChunks.length; chunkIdx += 1) {
+      const deviceChunk = deviceChunks[chunkIdx];
+      const isFirstChunk = chunkIdx === 0;
+
+      await runTransaction(db, async (tx) => {
+        // 1. READS FIRST
+        for (const dev of deviceChunk) {
+          const idxSnap = await tx.get(doc(db, 'barcodeIndex', dev.indexKey));
+          if (idxSnap.exists()) {
+            throw new Error(`رقم الجرد "${dev.inv}" محجوز مسبقاً في قاعدة البيانات.`);
+          }
         }
-      }
 
-      const balanceSnaps = new Map<string, number>();
-      for (const line of params.consumableLines) {
-        if (line.quantity <= 0) {
-          throw new Error(`الكمية المدخلة للمادة "${line.itemName}" يجب أن تكون أكبر من صفر.`);
+        const balanceSnaps = new Map<string, number>();
+        if (isFirstChunk) {
+          for (const line of params.consumableLines) {
+            if (line.quantity <= 0) {
+              throw new Error(`الكمية المدخلة للمادة "${line.itemName}" يجب أن تكون أكبر من صفر.`);
+            }
+            const bSnap = await tx.get(doc(db, 'stockBalances', line.itemId));
+            const curr = bSnap.exists()
+              ? Number((bSnap.data() as { currentQuantity?: number }).currentQuantity || 0)
+              : 0;
+            balanceSnaps.set(line.itemId, curr);
+          }
         }
-        const bSnap = await tx.get(doc(db, 'stockBalances', line.itemId));
-        const curr = bSnap.exists()
-          ? Number((bSnap.data() as { currentQuantity?: number }).currentQuantity || 0)
-          : 0;
-        balanceSnaps.set(line.itemId, curr);
-      }
 
-      // 2. WRITES
-      tx.set(doc(db, 'stockEntries', entryId), entryRecord);
+        // 2. WRITES
+        if (isFirstChunk) {
+          tx.set(doc(db, 'stockEntries', entryId), entryRecord);
+        }
 
-      for (const dev of preparedDevices) {
-        const deviceDoc: DeviceRecord = {
-          id: dev.deviceId,
-          inventoryNumber: dev.inv,
-          name: dev.name,
-          categoryId: dev.categoryId,
-          manufacturer: (dev.manufacturer || '').trim().slice(0, 100),
-          model: (dev.model || '').trim().slice(0, 100),
-          serialNumber: (dev.serialNumber || '').trim().slice(0, 100),
-          purchaseDate: '',
-          receivedDate: params.entryDate,
-          acquisitionSource: params.source.trim().slice(0, 160),
-          technicalStatus: TECHNICAL_STATUS_OPTIONS[0],
-          storageStatus: DeviceStorageStatus.IN_WAREHOUSE,
-          currentLocation: (dev.storageLocation || 'المخزن الرئيسي').trim().slice(0, 150),
-          departmentId: '',
-          unitId: '',
-          recipientName: '',
-          issuedDate: '',
-          returnedDate: '',
-          warrantyPeriod: (dev.warrantyPeriod || '').trim().slice(0, 80),
-          barcode: dev.inv,
-          qrCodeValue: `SAYEDMART:DEV:${dev.deviceId}`,
-          imageUrl: '',
-          notes: (params.notes || '').trim().slice(0, 800),
-          isArchived: false,
-          createdAt: nowIso,
-          updatedAt: nowIso,
-        };
+        for (const dev of deviceChunk) {
+          const effectiveReceivedDate = (dev.receivedDate || params.entryDate || '').slice(0, 30);
+          const effectiveNotes = (dev.notes || params.notes || '').trim().slice(0, 800);
+          const deviceDoc: DeviceRecord = {
+            id: dev.deviceId,
+            inventoryNumber: dev.inv,
+            name: dev.name,
+            categoryId: dev.categoryId,
+            manufacturer: (dev.manufacturer || '').trim().slice(0, 100),
+            model: (dev.model || '').trim().slice(0, 100),
+            serialNumber: (dev.serialNumber || '').trim().slice(0, 100),
+            purchaseDate: '',
+            receivedDate: effectiveReceivedDate,
+            acquisitionSource: params.source.trim().slice(0, 160),
+            technicalStatus: (dev.technicalStatus || TECHNICAL_STATUS_OPTIONS[0]).slice(0, 50),
+            storageStatus: DeviceStorageStatus.IN_WAREHOUSE,
+            currentLocation: (dev.storageLocation || 'المخزن الرئيسي').trim().slice(0, 150),
+            departmentId: '',
+            unitId: '',
+            recipientName: '',
+            issuedDate: '',
+            returnedDate: '',
+            warrantyPeriod: (dev.warrantyPeriod || '').trim().slice(0, 80),
+            barcode: dev.inv,
+            qrCodeValue: `SAYEDMART:DEV:${dev.deviceId}`,
+            imageUrl: '',
+            notes: effectiveNotes,
+            isArchived: false,
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          };
 
-        tx.set(doc(db, 'barcodeIndex', dev.indexKey), {
-          code: dev.indexKey,
-          targetType: 'DEVICE',
-          targetId: dev.deviceId,
-        });
-        tx.set(doc(db, 'devices', dev.deviceId), deviceDoc);
+          tx.set(doc(db, 'barcodeIndex', dev.indexKey), {
+            code: dev.indexKey,
+            targetType: 'DEVICE',
+            targetId: dev.deviceId,
+          });
+          tx.set(doc(db, 'devices', dev.deviceId), deviceDoc);
 
-        const histId = genId('hist');
-        tx.set(doc(db, 'devices', dev.deviceId, 'history', histId), {
-          id: histId,
-          deviceId: dev.deviceId,
-          actorUid: user.uid,
-          actorName: params.actorName,
-          summary: `إدخال للمخزن بموجب سند رقم ${voucherNumber}`,
-          createdAt: serverTimestamp(),
-        });
+          const histId = genId('hist');
+          tx.set(doc(db, 'devices', dev.deviceId, 'history', histId), {
+            id: histId,
+            deviceId: dev.deviceId,
+            actorUid: user.uid,
+            actorName: params.actorName,
+            summary: `إدخال للمخزن بموجب سند رقم ${voucherNumber}`,
+            createdAt: serverTimestamp(),
+          });
 
-        const mvId = genId('mv');
-        tx.set(doc(db, 'stockMovements', mvId), {
-          id: mvId,
-          movementNumber: `MV-${Date.now().toString().slice(-6)}-${Math.floor(10 + Math.random() * 89)}`,
-          type: MovementType.ENTRY,
-          inventoryCode: dev.inv,
-          assetName: dev.name,
-          previousLocation: params.source.trim().slice(0, 150) || 'جهة التجهيز',
-          newLocation: deviceDoc.currentLocation || 'المخزن الرئيسي',
-          recipientName: params.actorName.slice(0, 120),
-          voucherNumber,
-          performedByUid: user.uid,
-          performedByName: params.actorName.slice(0, 120),
-          notes: (params.notes || '').trim().slice(0, 500),
-          createdAt: serverTimestamp(),
-        });
-      }
+          const mvId = genId('mv');
+          opSeqCounter = (opSeqCounter + 1) % 100000;
+          tx.set(doc(db, 'stockMovements', mvId), {
+            id: mvId,
+            movementNumber: `MV-${Date.now().toString().slice(-6)}-${String(opSeqCounter).padStart(3, '0')}`,
+            type: MovementType.ENTRY,
+            inventoryCode: dev.inv,
+            assetName: dev.name,
+            previousLocation: params.source.trim().slice(0, 150) || 'جهة التجهيز',
+            newLocation: deviceDoc.currentLocation || 'المخزن الرئيسي',
+            recipientName: params.actorName.slice(0, 120),
+            voucherNumber,
+            performedByUid: user.uid,
+            performedByName: params.actorName.slice(0, 120),
+            notes: effectiveNotes.slice(0, 500),
+            createdAt: serverTimestamp(),
+          });
+        }
 
-      for (const line of params.consumableLines) {
-        const prevQty = balanceSnaps.get(line.itemId) || 0;
-        const nextQty = prevQty + line.quantity;
+        if (isFirstChunk) {
+          for (const line of params.consumableLines) {
+            const prevQty = balanceSnaps.get(line.itemId) || 0;
+            const nextQty = prevQty + line.quantity;
 
-        tx.set(doc(db, 'stockBalances', line.itemId), {
-          itemId: line.itemId,
-          currentQuantity: nextQty,
-          reservedQuantity: 0,
-          updatedAt: nowIso,
-        });
+            tx.set(doc(db, 'stockBalances', line.itemId), {
+              itemId: line.itemId,
+              currentQuantity: nextQty,
+              reservedQuantity: 0,
+              updatedAt: nowIso,
+            });
 
-        const mvId = genId('mv');
-        tx.set(doc(db, 'stockMovements', mvId), {
-          id: mvId,
-          movementNumber: `MV-${Date.now().toString().slice(-6)}-${Math.floor(10 + Math.random() * 89)}`,
-          type: MovementType.ENTRY,
-          inventoryCode: line.itemCode.slice(0, 50),
-          assetName: `${line.itemName} (+${line.quantity} ${line.unitOfMeasure})`.slice(0, 150),
-          previousLocation: params.source.trim().slice(0, 150) || 'تجهيز مخزني',
-          newLocation: 'المخزن الرئيسي',
-          recipientName: params.actorName.slice(0, 120),
-          voucherNumber,
-          performedByUid: user.uid,
-          performedByName: params.actorName.slice(0, 120),
-          notes: (params.notes || '').trim().slice(0, 500),
-          createdAt: serverTimestamp(),
-        });
-      }
-    });
+            const mvId = genId('mv');
+            opSeqCounter = (opSeqCounter + 1) % 100000;
+            tx.set(doc(db, 'stockMovements', mvId), {
+              id: mvId,
+              movementNumber: `MV-${Date.now().toString().slice(-6)}-${String(opSeqCounter).padStart(3, '0')}`,
+              type: MovementType.ENTRY,
+              inventoryCode: line.itemCode.slice(0, 50),
+              assetName: `${line.itemName} (+${line.quantity} ${line.unitOfMeasure})`.slice(0, 150),
+              previousLocation: params.source.trim().slice(0, 150) || 'تجهيز مخزني',
+              newLocation: 'المخزن الرئيسي',
+              recipientName: params.actorName.slice(0, 120),
+              voucherNumber,
+              performedByUid: user.uid,
+              performedByName: params.actorName.slice(0, 120),
+              notes: (params.notes || '').trim().slice(0, 500),
+              createdAt: serverTimestamp(),
+            });
+          }
+        }
+      });
+    }
   } catch (err) {
     if (
       err instanceof Error &&

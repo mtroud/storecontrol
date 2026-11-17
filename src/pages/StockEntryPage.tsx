@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Eye,
   HardDrive,
+  Layers,
   Plus,
   Trash2,
   Upload,
@@ -11,7 +12,11 @@ import {
 } from 'lucide-react';
 import { VoucherPreviewModal } from '../components/operations/VoucherPreviewModal';
 import { useAuth } from '../context/AuthContext';
-import { CategoryRecord, subscribeToCategories } from '../services/categoriesService';
+import {
+  CategoryRecord,
+  initializeOfficialCategoriesPreset,
+  subscribeToCategories,
+} from '../services/categoriesService';
 import {
   ConsumableRecord,
   subscribeToConsumablesWithBalances,
@@ -62,7 +67,9 @@ export function StockEntryPage() {
   const [devSerial, setDevSerial] = useState('');
   const [devWarranty, setDevWarranty] = useState('');
   const [devLocation, setDevLocation] = useState('المخزن الرئيسي');
+  const [devQuantity, setDevQuantity] = useState(1);
   const [newDevices, setNewDevices] = useState<NewDeviceEntryLine[]>([]);
+  const [preparingBatch, setPreparingBatch] = useState(false);
 
   // Draft consumable replenish line
   const [selectedItemId, setSelectedItemId] = useState('');
@@ -126,6 +133,29 @@ export function StockEntryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [devCatId, devices.length]);
 
+  const generateSequentialBatchNumbers = (
+    startCode: string,
+    count: number,
+    usedSet: Set<string>
+  ): string[] => {
+    const cleanStart = startCode.trim().toUpperCase();
+    const match = cleanStart.match(/^(.*?)(\d+)$/);
+    const prefixPart = match ? match[1] : `${cleanStart}-`;
+    let seq = match ? parseInt(match[2], 10) : 1;
+    const width = match ? Math.max(4, match[2].length) : 4;
+
+    const results: string[] = [];
+    while (results.length < count) {
+      const candidate = `${prefixPart}${String(seq).padStart(width, '0')}`;
+      seq += 1;
+      if (!usedSet.has(candidate)) {
+        usedSet.add(candidate);
+        results.push(candidate);
+      }
+    }
+    return results;
+  };
+
   const handleAddDeviceLine = () => {
     setFeedback(null);
     if (!devCatId || !devInv.trim() || !devName.trim()) {
@@ -135,32 +165,145 @@ export function StockEntryPage() {
       });
       return;
     }
+    const qty = Math.min(200, Math.max(1, Math.floor(Number(devQuantity) || 1)));
+    const usedSet = new Set<string>([
+      ...devices.map((d) => d.inventoryNumber.toUpperCase()),
+      ...newDevices.map((d) => d.inventoryNumber.toUpperCase()),
+    ]);
+
     const cleanInv = devInv.trim().toUpperCase();
-    if (newDevices.some((d) => d.inventoryNumber === cleanInv)) {
+    if (qty === 1 && usedSet.has(cleanInv)) {
       setFeedback({
         type: 'error',
-        message: `رقم الجرد ${cleanInv} مضاف مسبقاً في هذا السند.`,
+        message: `رقم الجرد ${cleanInv} مستخدم أو مضاف مسبقاً.`,
       });
       return;
     }
 
-    const nextQueued: NewDeviceEntryLine[] = [
-      ...newDevices,
-      {
-        inventoryNumber: cleanInv,
-        name: devName.trim(),
-        categoryId: devCatId,
-        manufacturer: devManufacturer.trim(),
-        model: devModel.trim(),
-        serialNumber: devSerial.trim(),
-        warrantyPeriod: devWarranty.trim(),
-        storageLocation: devLocation.trim() || 'المخزن الرئيسي',
-      },
-    ];
+    const allocatedNumbers =
+      qty === 1
+        ? [cleanInv]
+        : generateSequentialBatchNumbers(cleanInv, qty, usedSet);
+
+    const addedLines: NewDeviceEntryLine[] = allocatedNumbers.map((invCode, idx) => ({
+      inventoryNumber: invCode,
+      name: devName.trim(),
+      categoryId: devCatId,
+      manufacturer: devManufacturer.trim(),
+      model: devModel.trim(),
+      serialNumber:
+        qty === 1 ? devSerial.trim() : devSerial.trim() ? `${devSerial.trim()}-${idx + 1}` : '',
+      warrantyPeriod: devWarranty.trim(),
+      storageLocation: devLocation.trim() || 'المخزن الرئيسي',
+      receivedDate: entryDate,
+    }));
+
+    const nextQueued: NewDeviceEntryLine[] = [...newDevices, ...addedLines];
     setNewDevices(nextQueued);
     setDevName('');
     setDevSerial('');
+    setDevQuantity(1);
     setDevInv(computeSuggestedInv(devCatId, nextQueued));
+  };
+
+  const handlePrepare2012PhonesBatch = async () => {
+    setFeedback(null);
+    setPreparingBatch(true);
+    try {
+      let targetCat = categories.find(
+        (c) =>
+          c.id === 'cat-telecom' ||
+          c.codePrefix.toUpperCase() === 'COM' ||
+          c.name.includes('اتصالات') ||
+          c.name.includes('هواتف')
+      );
+
+      if (
+        !targetCat &&
+        (session?.role === UserRole.SYSTEM_ADMIN ||
+          session?.role === UserRole.WAREHOUSE_MANAGER)
+      ) {
+        await initializeOfficialCategoriesPreset(categories);
+        targetCat = {
+          id: 'cat-telecom',
+          name: 'أجهزة الاتصالات والبدالات',
+          codePrefix: 'COM',
+          isActive: true,
+        };
+      }
+
+      const effectiveCatId = targetCat?.id || devCatId || categories[0]?.id || '';
+      const effectivePrefix = targetCat?.codePrefix || categoryMap.get(effectiveCatId)?.codePrefix || 'COM';
+      if (!effectiveCatId) {
+        setFeedback({
+          type: 'error',
+          message: 'يرجى إنشاء تصنيف واحد على الأقل من صفحة التصنيفات قبل إدراج الأجهزة.',
+        });
+        return;
+      }
+
+      const usedSet = new Set<string>([
+        ...devices.map((d) => d.inventoryNumber.toUpperCase()),
+        ...newDevices.map((d) => d.inventoryNumber.toUpperCase()),
+      ]);
+      const startInv = generateNextInventoryNumber(effectivePrefix, [
+        ...devices,
+        ...newDevices.map((d, idx) => ({
+          id: `queued_${idx}`,
+          inventoryNumber: d.inventoryNumber,
+          name: d.name,
+          categoryId: d.categoryId,
+          storageStatus: devices[0]?.storageStatus,
+          isArchived: false,
+        })),
+      ] as DeviceRecord[]);
+
+      const allocated = generateSequentialBatchNumbers(startInv, 63, usedSet);
+      const batchDate = '2012-01-01';
+      const batchNote = 'موجود في المخزن الرئيسي منذ عام 2012';
+
+      const avayaLines: NewDeviceEntryLine[] = allocated.slice(0, 30).map((inv) => ({
+        inventoryNumber: inv,
+        name: 'هاتف شبكي Avaya',
+        categoryId: effectiveCatId,
+        manufacturer: 'Avaya',
+        model: 'IP Phone',
+        storageLocation: 'المخزن الرئيسي',
+        receivedDate: batchDate,
+        notes: batchNote,
+      }));
+
+      const yeastarLines: NewDeviceEntryLine[] = allocated.slice(30, 63).map((inv) => ({
+        inventoryNumber: inv,
+        name: 'هاتف شبكي Yeastar',
+        categoryId: effectiveCatId,
+        manufacturer: 'Yeastar',
+        model: 'IP Phone (Yeaster)',
+        storageLocation: 'المخزن الرئيسي',
+        receivedDate: batchDate,
+        notes: batchNote,
+      }));
+
+      const nextQueued = [...newDevices, ...avayaLines, ...yeastarLines];
+      setDevCatId(effectiveCatId);
+      setEntryDate(batchDate);
+      setSource('رصيد مخزني سابق (منذ عام 2012)');
+      setNotes('توثيق 30 هاتف Avaya و33 هاتف Yeastar الموجودة في المخزن منذ عام 2012');
+      setNewDevices(nextQueued);
+      setDevInv(computeSuggestedInv(effectiveCatId, nextQueued));
+      setFeedback({
+        type: 'success',
+        message:
+          'تم تجهيز 63 جهازاً في السند (30 هاتف Avaya + 33 هاتف Yeastar بتاريخ 2012-01-01). راجع البنود ثم اضغط «اعتماد سند الإدخال» لحفظها في قاعدة البيانات.',
+      });
+    } catch (err) {
+      setFeedback({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'تعذر تجهيز دفعة الهواتف.',
+      });
+    } finally {
+      setPreparingBatch(false);
+    }
   };
 
   const handleAddConsumableLine = () => {
@@ -354,11 +497,26 @@ export function StockEntryPage() {
             </div>
           </div>
 
-          {/* Section A: Add Individual Devices */}
+          {/* Section A: Add Individual or Batch Devices */}
           <div className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-3">
-            <div className="flex items-center gap-2 text-xs font-bold text-[#0F2544] dark:text-[#D4AE60]">
-              <HardDrive className="w-4 h-4" />
-              <span>أولاً: إضافة أجهزة فردية جديدة (يُنشأ لكل جهاز بطاقة ورقم جرد فريد)</span>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-bold text-[#0F2544] dark:text-[#D4AE60]">
+                <HardDrive className="w-4 h-4" />
+                <span>أولاً: إضافة أجهزة فردية أو دفعة أجهزة متماثلة (يُنشأ لكل جهاز بطاقة ورقم جرد فريد)</span>
+              </div>
+              <button
+                type="button"
+                disabled={preparingBatch}
+                onClick={() => void handlePrepare2012PhonesBatch()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-[#C59B47] text-[#0F2544] dark:text-[#D4AE60] bg-[#C59B47]/10 hover:bg-[#C59B47]/20 disabled:opacity-50"
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>
+                  {preparingBatch
+                    ? 'جاري تجهيز الدفعة...'
+                    : 'تجهيز دفعة هواتف 2012 (30 Avaya + 33 Yeastar)'}
+                </span>
+              </button>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 p-4 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800">
@@ -385,7 +543,7 @@ export function StockEntryPage() {
 
               <div>
                 <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                  رقم الجرد الفريد
+                  رقم الجرد الفريد (البداية)
                 </label>
                 <input
                   type="text"
@@ -396,7 +554,7 @@ export function StockEntryPage() {
                 />
               </div>
 
-              <div className="sm:col-span-2">
+              <div>
                 <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
                   اسم الجهاز
                 </label>
@@ -404,8 +562,24 @@ export function StockEntryPage() {
                   type="text"
                   value={devName}
                   onChange={(e) => setDevName(e.target.value)}
-                  placeholder="مثال: راوتر MikroTik CCR2004"
+                  placeholder="مثال: هاتف شبكي Avaya"
                   className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                  العدد (إدراج جماعي متسلسل)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={200}
+                  value={devQuantity}
+                  onChange={(e) =>
+                    setDevQuantity(Math.min(200, Math.max(1, Number(e.target.value) || 1)))
+                  }
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono-tabular"
                 />
               </div>
 
@@ -464,7 +638,7 @@ export function StockEntryPage() {
                   className="inline-flex items-center gap-1 px-3.5 py-2 rounded-lg text-xs font-semibold bg-[#0F2544] text-white hover:bg-[#173560] dark:bg-[#C59B47] dark:text-[#0B1220] shrink-0"
                 >
                   <Plus className="w-4 h-4" />
-                  <span>إدراج</span>
+                  <span>{devQuantity > 1 ? `إدراج (${devQuantity})` : 'إدراج'}</span>
                 </button>
               </div>
             </div>
@@ -524,10 +698,24 @@ export function StockEntryPage() {
           {/* Pending Voucher Lines Summary */}
           {(newDevices.length > 0 || consumableLines.length > 0) && (
             <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-              <div className="px-4 py-2.5 bg-slate-50 dark:bg-slate-900/60 text-xs font-bold text-slate-800 dark:text-slate-200">
-                البنود المدرجة في السند ({newDevices.length + consumableLines.length})
+              <div className="px-4 py-2.5 bg-slate-50 dark:bg-slate-900/60 text-xs font-bold text-slate-800 dark:text-slate-200 flex flex-wrap items-center justify-between gap-2">
+                <span>
+                  البنود المدرجة في السند ({newDevices.length + consumableLines.length} بند —{' '}
+                  {newDevices.length} جهاز، {consumableLines.length} مادة كمية)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewDevices([]);
+                    setConsumableLines([]);
+                    if (devCatId) setDevInv(computeSuggestedInv(devCatId, []));
+                  }}
+                  className="text-[11px] font-semibold text-red-600 hover:underline"
+                >
+                  تفريغ جميع البنود
+                </button>
               </div>
-              <div className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+              <div className="max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 text-xs">
                 {newDevices.map((d, idx) => (
                   <div
                     key={d.inventoryNumber}
@@ -538,8 +726,11 @@ export function StockEntryPage() {
                         {d.inventoryNumber}
                       </span>{' '}
                       · <span className="font-semibold">{d.name}</span>{' '}
+                      {d.manufacturer && (
+                        <span className="text-slate-500">({d.manufacturer})</span>
+                      )}{' '}
                       <span className="text-slate-400">
-                        ({categoryMap.get(d.categoryId)?.name})
+                        · {categoryMap.get(d.categoryId)?.name || 'أجهزة الاتصالات والبدالات'}
                       </span>
                     </div>
                     <button
