@@ -15,6 +15,7 @@ import {
   MOVEMENT_TYPE_LABELS,
   MovementType,
 } from '../types/inventory';
+import { SignatureMap, SignatureSlotId } from '../types/signature';
 import { CategoryRecord } from './categoriesService';
 import { ConsumableRecord } from './consumablesService';
 import {
@@ -1007,7 +1008,20 @@ function fitCanvasText(
   return `${res}…`;
 }
 
-export function exportReportPdf(report: BuiltReportData, actorName: string): void {
+function loadSignatureImage(src: string): Promise<HTMLImageElement | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+
+export async function exportReportPdf(
+  report: BuiltReportData,
+  actorName: string,
+  signatures?: SignatureMap
+): Promise<void> {
   const isLandscape = report.definition.orientation === 'landscape';
   // High-DPI A4 Canvas (~150 DPI): Portrait 1240x1754, Landscape 1754x1240
   const pageW = isLandscape ? 1754 : 1240;
@@ -1017,7 +1031,7 @@ export function exportReportPdf(report: BuiltReportData, actorName: string): voi
   const rowH = 38;
   const tableHeaderH = 44;
   const topHeaderH = 148;
-  const footerH = 110;
+  const footerH = 156;
 
   const pdf = new jsPDF({
     orientation: isLandscape ? 'landscape' : 'portrait',
@@ -1026,6 +1040,19 @@ export function exportReportPdf(report: BuiltReportData, actorName: string): voi
   });
   const pdfW = isLandscape ? 297 : 210;
   const pdfH = isLandscape ? 210 : 297;
+
+  const loadedImages: Partial<Record<SignatureSlotId, HTMLImageElement | null>> = {};
+  if (signatures) {
+    const slots: SignatureSlotId[] = ['organizer', 'reviewer', 'approver'];
+    await Promise.all(
+      slots.map(async (slot) => {
+        const sig = signatures[slot];
+        if (sig?.signatureImageDataUrl) {
+          loadedImages[slot] = await loadSignatureImage(sig.signatureImageDataUrl);
+        }
+      })
+    );
+  }
 
   const rowsPerFirstPage = Math.max(
     1,
@@ -1187,8 +1214,8 @@ export function exportReportPdf(report: BuiltReportData, actorName: string): voi
       });
     }
 
-    // Footer + Signatures on last page
-    const footY = pageH - margin - 74;
+    // Footer + Digital Signatures on last page
+    const footY = pageH - margin - 134;
     ctx.strokeStyle = '#CBD5E1';
     ctx.beginPath();
     ctx.moveTo(margin, footY);
@@ -1196,12 +1223,68 @@ export function exportReportPdf(report: BuiltReportData, actorName: string): voi
     ctx.stroke();
 
     if (pageIndex === chunks.length - 1) {
-      ctx.fillStyle = '#0F2544';
-      ctx.font = 'bold 15px Cairo, Tahoma, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('منظم التقرير / أمين المخزن', pageW - margin - contentW * 0.16, footY + 26);
-      ctx.fillText('مسؤول شعبة السيطرة والإنترنت', pageW / 2, footY + 26);
-      ctx.fillText('مصادقة مدير القسم', margin + contentW * 0.16, footY + 26);
+      const slotDefs: Array<{
+        slotId: SignatureSlotId;
+        label: string;
+        centerX: number;
+      }> = [
+        {
+          slotId: 'organizer',
+          label: 'منظم التقرير / أمين المخزن',
+          centerX: pageW - margin - contentW * 0.16,
+        },
+        {
+          slotId: 'reviewer',
+          label: 'مسؤول شعبة السيطرة والإنترنت',
+          centerX: pageW / 2,
+        },
+        {
+          slotId: 'approver',
+          label: 'مصادقة مدير القسم',
+          centerX: margin + contentW * 0.16,
+        },
+      ];
+
+      slotDefs.forEach(({ slotId, label, centerX }) => {
+        ctx.fillStyle = '#0F2544';
+        ctx.font = 'bold 15px Cairo, Tahoma, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(label, centerX, footY + 10);
+
+        const sig = signatures?.[slotId];
+        const sigImg = loadedImages[slotId];
+        if (sig && sigImg) {
+          const maxW = 190;
+          const maxH = 56;
+          const ratio = Math.min(maxW / sigImg.width, maxH / sigImg.height);
+          const drawW = sigImg.width * ratio;
+          const drawH = sigImg.height * ratio;
+          ctx.drawImage(sigImg, centerX - drawW / 2, footY + 32, drawW, drawH);
+
+          ctx.fillStyle = '#0F172A';
+          ctx.font = 'bold 13px Cairo, Tahoma, sans-serif';
+          ctx.fillText(sig.signerName, centerX, footY + 92);
+
+          ctx.fillStyle = '#475569';
+          ctx.font = '500 11px "IBM Plex Mono", monospace';
+          ctx.fillText(
+            `${sig.verificationCode} · ${new Date(sig.signedAt).toLocaleDateString('ar-IQ')}`,
+            centerX,
+            footY + 111
+          );
+        } else {
+          ctx.strokeStyle = '#94A3B8';
+          ctx.beginPath();
+          ctx.moveTo(centerX - 85, footY + 86);
+          ctx.lineTo(centerX + 85, footY + 86);
+          ctx.stroke();
+
+          ctx.fillStyle = '#64748B';
+          ctx.font = '500 12px Cairo, Tahoma, sans-serif';
+          ctx.fillText('التوقيع والختم', centerX, footY + 94);
+        }
+      });
     }
 
     ctx.fillStyle = '#64748B';

@@ -1,3 +1,6 @@
+import { PenLine, ShieldCheck, Trash2 } from 'lucide-react';
+import { useOptionalSignatures } from '../../context/SignatureContext';
+import { SignatureRoleLabels, SignatureSlotId } from '../../types/signature';
 import { InstitutionalEmblem } from '../brand/InstitutionalEmblem';
 
 interface PrintDocumentHeaderProps {
@@ -84,6 +87,8 @@ interface PrintSignatureFooterProps {
   leftName?: string;
   centerName?: string;
   rightName?: string;
+  forceVisible?: boolean;
+  showInteractiveControls?: boolean;
 }
 
 export function PrintSignatureFooter({
@@ -93,27 +98,130 @@ export function PrintSignatureFooter({
   rightName = 'الاسم والتوقيع',
   centerName = 'التوقيع والتاريخ',
   leftName = 'الختم والتوقيع',
+  forceVisible = false,
+  showInteractiveControls = false,
 }: PrintSignatureFooterProps) {
+  const sigCtx = useOptionalSignatures();
+
+  const roleOverrides: SignatureRoleLabels = {
+    organizer: rightRole,
+    reviewer: centerRole,
+    approver: leftRole,
+  };
+
+  const slots: Array<{
+    slotId: SignatureSlotId;
+    roleTitle: string;
+    fallbackName: string;
+  }> = [
+    { slotId: 'organizer', roleTitle: rightRole, fallbackName: rightName },
+    { slotId: 'reviewer', roleTitle: centerRole, fallbackName: centerName },
+    { slotId: 'approver', roleTitle: leftRole, fallbackName: leftName },
+  ];
+
   return (
-    <footer className="hidden print:grid grid-cols-3 gap-6 pt-6 mt-6 border-t border-slate-300 text-center text-[11px] text-slate-800 print-avoid-break">
-      <div className="space-y-8">
-        <div className="font-bold text-[#0F2544]">{rightRole}</div>
-        <div className="border-t border-slate-400 pt-1 text-slate-500">
-          {rightName}
-        </div>
-      </div>
-      <div className="space-y-8">
-        <div className="font-bold text-[#0F2544]">{centerRole}</div>
-        <div className="border-t border-slate-400 pt-1 text-slate-500">
-          {centerName}
-        </div>
-      </div>
-      <div className="space-y-8">
-        <div className="font-bold text-[#0F2544]">{leftRole}</div>
-        <div className="border-t border-slate-400 pt-1 text-slate-500">
-          {leftName}
-        </div>
-      </div>
+    <footer
+      className={`${
+        forceVisible ? 'grid' : 'hidden print:grid'
+      } grid-cols-1 sm:grid-cols-3 gap-6 pt-6 mt-6 border-t border-slate-300 text-center text-[11px] text-slate-800 print-avoid-break`}
+    >
+      {slots.map(({ slotId, roleTitle, fallbackName }) => {
+        const sig = sigCtx?.signatures[slotId];
+        const signedDate = sig
+          ? new Date(sig.signedAt).toLocaleDateString('ar-IQ', {
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit',
+            })
+          : '';
+
+        return (
+          <div key={slotId} className="flex flex-col justify-between gap-2">
+            <div className="font-bold text-[#0F2544]">{roleTitle}</div>
+
+            {sig ? (
+              <div className="space-y-1.5 py-1">
+                <div className="h-16 flex items-center justify-center">
+                  <img
+                    src={sig.signatureImageDataUrl}
+                    alt={`توقيع ${sig.signerName}`}
+                    className="max-h-16 max-w-full object-contain"
+                  />
+                </div>
+                <div className="border-t border-slate-400 pt-1.5 space-y-0.5">
+                  <div className="font-bold text-slate-900">{sig.signerName}</div>
+                  <div className="text-[10px] text-slate-600">{sig.signerRoleLabel}</div>
+                  <div className="text-[9.5px] font-mono-tabular text-slate-500">
+                    موثق إلكترونياً · {signedDate} · {sig.verificationCode}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="pt-8">
+                <div className="border-t border-slate-400 pt-1.5 text-slate-500">
+                  {fallbackName}
+                </div>
+              </div>
+            )}
+
+            {showInteractiveControls && sigCtx && sigCtx.canSign && (
+              <div className="flex items-center justify-center gap-2 pt-1 print:hidden">
+                <button
+                  type="button"
+                  onClick={() => sigCtx.openSignatureModal(slotId, roleOverrides)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-300 bg-slate-50 hover:bg-slate-100 text-[11px] font-semibold text-[#0F2544]"
+                >
+                  <PenLine className="w-3 h-3" />
+                  <span>{sig ? 'تعديل التوقيع' : 'توقيع إلكتروني'}</span>
+                </button>
+                {sig && (
+                  <button
+                    type="button"
+                    onClick={() => sigCtx.clearSignature(slotId)}
+                    title="إزالة التوقيع"
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-red-200 bg-red-50 hover:bg-red-100 text-[11px] font-semibold text-red-700"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>مسح</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </footer>
   );
 }
+
+interface PrintSignatureTriggerButtonProps {
+  roleLabels?: Partial<SignatureRoleLabels>;
+  defaultSlot?: SignatureSlotId;
+  className?: string;
+}
+
+export function PrintSignatureTriggerButton({
+  roleLabels,
+  defaultSlot = 'organizer',
+  className = '',
+}: PrintSignatureTriggerButtonProps) {
+  const sigCtx = useOptionalSignatures();
+  if (!sigCtx) return null;
+
+  return (
+    <button
+      type="button"
+      onClick={() => sigCtx.openSignatureModal(defaultSlot, roleLabels)}
+      className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#111C2E] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 whitespace-nowrap print:hidden ${className}`}
+    >
+      <ShieldCheck className="w-4 h-4 text-[#C59B47]" />
+      <span>التوقيع الرقمي</span>
+      {sigCtx.signedCount > 0 && (
+        <span className="font-mono-tabular text-[11px] text-emerald-700 dark:text-emerald-400">
+          ({sigCtx.signedCount}/3)
+        </span>
+      )}
+    </button>
+  );
+}
+

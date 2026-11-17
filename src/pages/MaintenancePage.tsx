@@ -14,6 +14,7 @@ import {
 import {
   PrintDocumentHeader,
   PrintSignatureFooter,
+  PrintSignatureTriggerButton,
 } from '../components/common/PrintDocumentHeader';
 import { useAuth } from '../context/AuthContext';
 import { resolveAssetByScannedCode } from '../services/barcodeService';
@@ -348,6 +349,13 @@ export function MaintenancePage() {
             <Download className="w-4 h-4" />
             <span>تصدير Excel</span>
           </button>
+          <PrintSignatureTriggerButton
+            roleLabels={{
+              organizer: 'مسؤول وحدة الصيانة',
+              reviewer: 'التدقيق الفني / شعبة السيطرة',
+              approver: 'مصادقة مسؤول الشعبة',
+            }}
+          />
           <button
             type="button"
             onClick={() => window.print()}

@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { InstitutionalEmblem } from './components/brand/InstitutionalEmblem';
+import { DigitalSignatureModal } from './components/common/DigitalSignatureModal';
 import { NotificationDrawer } from './components/common/NotificationDrawer';
 import { QuickScannerModal } from './components/common/QuickScannerModal';
 import { MobileQuickBar } from './components/layout/MobileQuickBar';
 import { Sidebar } from './components/layout/Sidebar';
 import { TopHeader } from './components/layout/TopHeader';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { SignatureProvider } from './context/SignatureContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { AssetTransferPage } from './pages/AssetTransferPage';
 import { AuditLogsPage } from './pages/AuditLogsPage';
@@ -192,6 +194,8 @@ function AuthenticatedShell() {
         onMarkAllRead={handleMarkAllRead}
         onSelectNotification={handleSelectNotification}
       />
+
+      <DigitalSignatureModal />
     </div>
   );
 }
@@ -200,7 +204,9 @@ export default function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
-        <AuthenticatedShell />
+        <SignatureProvider>
+          <AuthenticatedShell />
+        </SignatureProvider>
       </AuthProvider>
     </ThemeProvider>
   );

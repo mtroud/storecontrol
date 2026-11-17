@@ -12,6 +12,7 @@ import { LiveCameraScanner } from '../components/barcode/LiveCameraScanner';
 import {
   PrintDocumentHeader,
   PrintSignatureFooter,
+  PrintSignatureTriggerButton,
 } from '../components/common/PrintDocumentHeader';
 import { useAuth } from '../context/AuthContext';
 import { CategoryRecord, subscribeToCategories } from '../services/categoriesService';
@@ -290,6 +291,13 @@ export function InventoryAuditPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <PrintSignatureTriggerButton
+            roleLabels={{
+              organizer: 'لجنة الجرد / أمين المخزن',
+              reviewer: 'التدقيق الفني / شعبة السيطرة',
+              approver: 'مصادقة مسؤول الشعبة',
+            }}
+          />
           <button
             type="button"
             onClick={() => window.print()}

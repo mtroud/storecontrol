@@ -23,6 +23,7 @@ import { BarcodePreview } from '../barcode/BarcodePreview';
 import {
   PrintDocumentHeader,
   PrintSignatureFooter,
+  PrintSignatureTriggerButton,
 } from '../common/PrintDocumentHeader';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -190,6 +191,13 @@ export function DeviceCardModal({
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            <PrintSignatureTriggerButton
+              roleLabels={{
+                organizer: 'أمين / موظف المخزن',
+                reviewer: 'المستلم / الوحدة الفنية',
+                approver: 'مصادقة مسؤول الشعبة',
+              }}
+            />
             <button
               type="button"
               onClick={() => window.print()}

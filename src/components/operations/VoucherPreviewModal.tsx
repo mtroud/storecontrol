@@ -2,6 +2,10 @@ import { createPortal } from 'react-dom';
 import { Printer, X } from 'lucide-react';
 import { PrintableVoucherData } from '../../services/operationsService';
 import { InstitutionalEmblem } from '../brand/InstitutionalEmblem';
+import {
+  PrintSignatureFooter,
+  PrintSignatureTriggerButton,
+} from '../common/PrintDocumentHeader';
 
 interface VoucherPreviewModalProps {
   voucher: PrintableVoucherData | null;
@@ -32,6 +36,13 @@ export function VoucherPreviewModal({
             {voucher.title} — <span className="font-mono-tabular">{voucher.voucherNumber}</span>
           </div>
           <div className="flex items-center gap-2">
+            <PrintSignatureTriggerButton
+              roleLabels={{
+                organizer: 'أمين / موظف المخزن',
+                reviewer: 'المستلم / الطرف الثاني',
+                approver: 'مصادقة مسؤول الشعبة',
+              }}
+            />
             <button
               type="button"
               onClick={() => window.print()}
@@ -167,27 +178,17 @@ export function VoucherPreviewModal({
             </div>
           )}
 
-          {/* Signature Footer */}
-          <div className="pt-8 grid grid-cols-3 gap-6 text-center text-xs">
-            <div className="space-y-8">
-              <div className="font-bold text-slate-800">أمين / موظف المخزن</div>
-              <div className="border-t border-slate-400 pt-1 text-slate-500">
-                {voucher.executedByName}
-              </div>
-            </div>
-            <div className="space-y-8">
-              <div className="font-bold text-slate-800">المستلم / الطرف الثاني</div>
-              <div className="border-t border-slate-400 pt-1 text-slate-500">
-                {voucher.recipientName || 'التوقيع والختم'}
-              </div>
-            </div>
-            <div className="space-y-8">
-              <div className="font-bold text-slate-800">مصادقة مسؤول الشعبة</div>
-              <div className="border-t border-slate-400 pt-1 text-slate-500">
-                التوقيع والتاريخ
-              </div>
-            </div>
-          </div>
+          {/* Digital Signature & Authorized Personnel Validation Block */}
+          <PrintSignatureFooter
+            forceVisible
+            showInteractiveControls
+            rightRole="أمين / موظف المخزن"
+            centerRole="المستلم / الطرف الثاني"
+            leftRole="مصادقة مسؤول الشعبة"
+            rightName={voucher.executedByName}
+            centerName={voucher.recipientName || 'التوقيع والختم'}
+            leftName="التوقيع والتاريخ"
+          />
         </div>
       </div>
     </div>

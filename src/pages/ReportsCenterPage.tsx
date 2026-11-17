@@ -10,7 +10,12 @@ import {
   Search,
 } from 'lucide-react';
 import { InstitutionalEmblem } from '../components/brand/InstitutionalEmblem';
+import {
+  PrintSignatureFooter,
+  PrintSignatureTriggerButton,
+} from '../components/common/PrintDocumentHeader';
 import { useAuth } from '../context/AuthContext';
+import { useSignatures } from '../context/SignatureContext';
 import {
   buildReportData,
   exportReportExcel,
@@ -36,6 +41,7 @@ const EMPTY_FILTERS: ReportFilters = {
 
 export function ReportsCenterPage() {
   const { session } = useAuth();
+  const { signatures } = useSignatures();
   const [dataset, setDataset] = useState<ReportsDataset | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
@@ -110,11 +116,15 @@ export function ReportsCenterPage() {
     return parts.join(' · ') || 'بدون قيود تصفية (كافة السجلات)';
   }, [dataset, filters]);
 
-  const handleExportPdf = () => {
+  const handleExportPdf = async () => {
     if (!builtReport) return;
     setExportingPdf(true);
     try {
-      exportReportPdf(builtReport, session?.fullName || 'مستخدم النظام');
+      await exportReportPdf(
+        builtReport,
+        session?.fullName || 'مستخدم النظام',
+        signatures
+      );
     } finally {
       setExportingPdf(false);
     }
@@ -162,12 +172,20 @@ export function ReportsCenterPage() {
           <button
             type="button"
             disabled={!builtReport || exportingPdf}
-            onClick={handleExportPdf}
+            onClick={() => void handleExportPdf()}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#111C2E] hover:bg-slate-50 dark:hover:bg-slate-800"
           >
             <FileText className="w-4 h-4 text-[#0F2544] dark:text-[#D4AE60]" />
             <span>{exportingPdf ? 'جاري التجهيز...' : 'تصدير PDF (A4)'}</span>
           </button>
+
+          <PrintSignatureTriggerButton
+            roleLabels={{
+              organizer: 'منظم التقرير / أمين المخزن',
+              reviewer: 'مسؤول شعبة السيطرة والإنترنت',
+              approver: 'مصادقة مدير قسم مجمع سيد الشهداء (ع)',
+            }}
+          />
 
           <button
             type="button"
@@ -489,29 +507,17 @@ export function ReportsCenterPage() {
             </div>
           )}
 
-          {/* Official 3-Signature Institutional Footer */}
-          <div className="pt-8 grid grid-cols-3 gap-6 text-center text-xs">
-            <div className="space-y-8">
-              <div className="font-bold text-slate-800">منظم التقرير / أمين المخزن</div>
-              <div className="border-t border-slate-400 pt-1 text-slate-500">
-                {session?.fullName || 'الاسم والتوقيع'}
-              </div>
-            </div>
-            <div className="space-y-8">
-              <div className="font-bold text-slate-800">مسؤول شعبة السيطرة والإنترنت</div>
-              <div className="border-t border-slate-400 pt-1 text-slate-500">
-                التوقيع والختم
-              </div>
-            </div>
-            <div className="space-y-8">
-              <div className="font-bold text-slate-800">
-                مصادقة مدير قسم مجمع سيد الشهداء (ع)
-              </div>
-              <div className="border-t border-slate-400 pt-1 text-slate-500">
-                التوقيع والتاريخ
-              </div>
-            </div>
-          </div>
+          {/* Official 3-Signature Institutional Validation Block */}
+          <PrintSignatureFooter
+            forceVisible
+            showInteractiveControls
+            rightRole="منظم التقرير / أمين المخزن"
+            centerRole="مسؤول شعبة السيطرة والإنترنت"
+            leftRole="مصادقة مدير قسم مجمع سيد الشهداء (ع)"
+            rightName={session?.fullName || 'الاسم والتوقيع'}
+            centerName="التوقيع والختم"
+            leftName="التوقيع والتاريخ"
+          />
         </div>
       )}
     </div>

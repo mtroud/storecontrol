@@ -16,6 +16,8 @@ import {
 } from 'lucide-react';
 import { BarcodePreview } from '../components/barcode/BarcodePreview';
 import { LiveCameraScanner } from '../components/barcode/LiveCameraScanner';
+import { QrCodeUtilityPanel } from '../components/barcode/QrCodeUtilityPanel';
+import { PrintDocumentHeader } from '../components/common/PrintDocumentHeader';
 import { DeviceCardModal } from '../components/devices/DeviceCardModal';
 import {
   AssetLabelData,
@@ -25,6 +27,7 @@ import {
   checkBarcodeAvailability,
   downloadLabelPng,
   downloadLabelsPdf,
+  LabelLayoutMode,
   LabelSizePreset,
   renderStickerCanvas,
   resolveAssetByScannedCode,
@@ -48,7 +51,7 @@ import {
   subscribeToDevices,
 } from '../services/devicesService';
 
-type BarcodeTabId = 'scanner' | 'labels' | 'generator';
+type BarcodeTabId = 'labels' | 'qr-utility' | 'scanner' | 'generator';
 
 export function BarcodeCenterPage() {
   const [activeTab, setActiveTab] = useState<BarcodeTabId>('labels');
@@ -81,7 +84,11 @@ export function BarcodeCenterPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [focusedLabelKey, setFocusedLabelKey] = useState<string>('');
   const [labelPreset, setLabelPreset] = useState<LabelSizePreset>('thermal_70x40');
+  const [labelLayoutMode, setLabelLayoutMode] = useState<LabelLayoutMode>('combined');
   const [previewDataUrl, setPreviewDataUrl] = useState<string>('');
+  const [printBatchDataUrls, setPrintBatchDataUrls] = useState<
+    Array<{ key: string; code: string; src: string }>
+  >([]);
   const [exporting, setExporting] = useState(false);
   const [labelFeedback, setLabelFeedback] = useState<string | null>(null);
 
@@ -160,6 +167,7 @@ export function BarcodeCenterPage() {
       if (assetKindFilter === 'consumables' && lbl.kind !== 'CONSUMABLE') return false;
       if (!q) return true;
       return (
+        lbl.id.toLowerCase().includes(q) ||
         lbl.code.toLowerCase().includes(q) ||
         lbl.barcodeValue.toLowerCase().includes(q) ||
         lbl.title.toLowerCase().includes(q) ||
@@ -185,7 +193,7 @@ export function BarcodeCenterPage() {
     const effectivePreset: LabelSizePreset =
       labelPreset === 'a4_sheet' ? 'thermal_70x40' : labelPreset;
 
-    renderStickerCanvas(focusedLabel, effectivePreset)
+    renderStickerCanvas(focusedLabel, effectivePreset, { layoutMode: labelLayoutMode })
       .then((canvas) => {
         if (active) setPreviewDataUrl(canvas.toDataURL('image/png'));
       })
@@ -196,12 +204,50 @@ export function BarcodeCenterPage() {
     return () => {
       active = false;
     };
-  }, [focusedLabel, labelPreset]);
+  }, [focusedLabel, labelPreset, labelLayoutMode]);
 
   const selectedLabels = useMemo(() => {
     const keySet = new Set(selectedIds);
     return allLabels.filter((l) => keySet.has(`${l.kind}:${l.id}`));
   }, [allLabels, selectedIds]);
+
+  const printTargets = useMemo(() => {
+    if (selectedLabels.length > 0) return selectedLabels;
+    return focusedLabel ? [focusedLabel] : [];
+  }, [selectedLabels, focusedLabel]);
+
+  useEffect(() => {
+    let active = true;
+    if (activeTab !== 'labels' || printTargets.length === 0) {
+      setPrintBatchDataUrls([]);
+      return;
+    }
+    const effectivePreset: LabelSizePreset =
+      labelPreset === 'a4_sheet' ? 'thermal_70x40' : labelPreset;
+
+    Promise.all(
+      printTargets.slice(0, 63).map(async (lbl) => {
+        const canvas = await renderStickerCanvas(lbl, effectivePreset, {
+          layoutMode: labelLayoutMode,
+        });
+        return {
+          key: `${lbl.kind}:${lbl.id}`,
+          code: lbl.code,
+          src: canvas.toDataURL('image/png'),
+        };
+      })
+    )
+      .then((items) => {
+        if (active) setPrintBatchDataUrls(items);
+      })
+      .catch(() => {
+        if (active) setPrintBatchDataUrls([]);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [activeTab, printTargets, labelPreset, labelLayoutMode]);
 
   const toggleSelectLabel = (key: string) => {
     setSelectedIds((prev) =>
@@ -227,7 +273,7 @@ export function BarcodeCenterPage() {
     try {
       const preset: LabelSizePreset =
         labelPreset === 'a4_sheet' ? 'thermal_70x40' : labelPreset;
-      await downloadLabelPng(focusedLabel, preset);
+      await downloadLabelPng(focusedLabel, preset, { layoutMode: labelLayoutMode });
       setLabelFeedback(`تم تحميل ملصق PNG للرمز ${focusedLabel.code} بنجاح.`);
     } catch (err) {
       setLabelFeedback(err instanceof Error ? err.message : 'تعذر تصدير الملصق PNG.');
@@ -241,7 +287,7 @@ export function BarcodeCenterPage() {
     setExporting(true);
     setLabelFeedback(null);
     try {
-      await downloadLabelsPdf(targets, labelPreset);
+      await downloadLabelsPdf(targets, labelPreset, { layoutMode: labelLayoutMode });
       setLabelFeedback(
         `تم إنشاء وتنزيل ملف PDF لعدد ${targets.length} ملصق(ات) بنجاح.`
       );
@@ -354,6 +400,7 @@ export function BarcodeCenterPage() {
           {(
             [
               { id: 'labels', label: 'توليد وطباعة الملصقات', icon: Printer },
+              { id: 'qr-utility', label: 'مولد رموز QR للأصول', icon: QrCode },
               { id: 'scanner', label: 'المسح الضوئي والبحث', icon: ScanLine },
               { id: 'generator', label: 'فحص وتوليد الرموز', icon: ShieldCheck },
             ] as Array<{ id: BarcodeTabId; label: string; icon: typeof QrCode }>
@@ -396,21 +443,22 @@ export function BarcodeCenterPage() {
 
       {/* TAB 1: Labels Generation & Batch Printing */}
       {activeTab === 'labels' && (
-        <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
-          {/* Left/Right List of Assets */}
-          <div className="xl:col-span-7 rounded-xl bg-white dark:bg-[#111C2E] border border-slate-200 dark:border-slate-800 overflow-hidden print:hidden">
-            <div className="p-4 border-b border-slate-200 dark:border-slate-800 space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="relative flex-1">
-                  <Search className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  <input
-                    type="text"
-                    value={labelSearch}
-                    onChange={(e) => setLabelSearch(e.target.value)}
-                    placeholder="ابحث برقم الجرد أو الاسم أو الباركود..."
-                    className="w-full pr-9 pl-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs sm:text-sm"
-                  />
-                </div>
+        <>
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 print:hidden">
+            {/* Left/Right List of Assets */}
+            <div className="xl:col-span-7 rounded-xl bg-white dark:bg-[#111C2E] border border-slate-200 dark:border-slate-800 overflow-hidden">
+              <div className="p-4 border-b border-slate-200 dark:border-slate-800 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="relative flex-1">
+                    <Search className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={labelSearch}
+                      onChange={(e) => setLabelSearch(e.target.value)}
+                      placeholder="ابحث برقم الجرد أو الاسم أو الباركود أو معرّف القاعدة..."
+                      className="w-full pr-9 pl-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs sm:text-sm"
+                    />
+                  </div>
 
                 <div className="inline-flex p-1 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0">
                   {(
@@ -514,6 +562,9 @@ export function BarcodeCenterPage() {
                           <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
                             {lbl.subtitle} · {lbl.location}
                           </div>
+                          <div className="text-[11px] text-slate-400 dark:text-slate-500 font-mono-tabular truncate">
+                            معرّف القاعدة: <span dir="ltr">{lbl.id}</span>
+                          </div>
                         </button>
                       </div>
 
@@ -534,20 +585,31 @@ export function BarcodeCenterPage() {
           {/* Right/Left Sticker Studio & Export */}
           <div className="xl:col-span-5 space-y-4">
             <div className="rounded-xl bg-white dark:bg-[#111C2E] border border-slate-200 dark:border-slate-800 p-5 space-y-4">
-              <div className="flex items-center justify-between gap-3 print:hidden">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
                   معاينة وتصدير الملصق الرسمي
                 </h2>
-                <select
-                  value={labelPreset}
-                  onChange={(e) => setLabelPreset(e.target.value as LabelSizePreset)}
-                  aria-label="حجم الملصق أو ورقة الطباعة"
-                  className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold"
-                >
-                  <option value="thermal_50x30">ملصق حراري 50×30 مم</option>
-                  <option value="thermal_70x40">ملصق حراري 70×40 مم</option>
-                  <option value="a4_sheet">ورقة A4 (21 ملصقاً/صفحة)</option>
-                </select>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={labelLayoutMode}
+                    onChange={(e) => setLabelLayoutMode(e.target.value as LabelLayoutMode)}
+                    aria-label="نمط تصميم الملصق"
+                    className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold"
+                  >
+                    <option value="combined">باركود + QR مزدوج</option>
+                    <option value="qr_focus">تركيز QR + معرّف القاعدة</option>
+                  </select>
+                  <select
+                    value={labelPreset}
+                    onChange={(e) => setLabelPreset(e.target.value as LabelSizePreset)}
+                    aria-label="حجم الملصق أو ورقة الطباعة"
+                    className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold"
+                  >
+                    <option value="thermal_50x30">ملصق حراري 50×30 مم</option>
+                    <option value="thermal_70x40">ملصق حراري 70×40 مم</option>
+                    <option value="a4_sheet">ورقة A4 (21 ملصقاً/صفحة)</option>
+                  </select>
+                </div>
               </div>
 
               {focusedLabel ? (
@@ -626,6 +688,51 @@ export function BarcodeCenterPage() {
             </div>
           </div>
         </div>
+
+          {/* Dedicated A4 Batch Printable Sticker Sheet */}
+          {printBatchDataUrls.length > 0 && (
+            <section className="hidden print:block text-slate-900">
+              <PrintDocumentHeader
+                title="ورقة ملصقات الباركود ورموز QR للموجودات"
+                subtitle="ملصقات تعريفية جاهزة للطباعة واللصق على الأجهزة والمواد المخزنية"
+                docCode="LBL-BATCH"
+                metaItems={[
+                  { label: 'عدد الملصقات', value: printBatchDataUrls.length },
+                  {
+                    label: 'النمط',
+                    value: labelLayoutMode === 'qr_focus' ? 'تركيز QR' : 'باركود + QR',
+                  },
+                ]}
+              />
+              <div className="grid grid-cols-3 gap-3">
+                {printBatchDataUrls.map((item) => (
+                  <div
+                    key={item.key}
+                    className="border border-slate-300 rounded p-1.5 bg-white print-avoid-break flex items-center justify-center"
+                  >
+                    <img
+                      src={item.src}
+                      alt={`ملصق ${item.code}`}
+                      className="w-full h-auto object-contain"
+                    />
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+        </>
+      )}
+
+      {/* TAB 1B: Dedicated Database-ID QR Code Generation Utility */}
+      {activeTab === 'qr-utility' && (
+        <QrCodeUtilityPanel
+          labels={allLabels}
+          loading={loading}
+          onTestScan={(qrPayload) => {
+            setActiveTab('scanner');
+            void handleScanCode(qrPayload);
+          }}
+        />
       )}
 
       {/* TAB 2: Live Camera & USB Scanner */}

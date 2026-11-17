@@ -19,6 +19,7 @@ import { BarcodePreview } from '../components/barcode/BarcodePreview';
 import {
   PrintDocumentHeader,
   PrintSignatureFooter,
+  PrintSignatureTriggerButton,
 } from '../components/common/PrintDocumentHeader';
 import {
   buildConsumableLabelData,
@@ -338,6 +339,8 @@ export function ConsumablesPage() {
             <Download className="w-4 h-4" />
             <span>تصدير CSV</span>
           </button>
+
+          <PrintSignatureTriggerButton className="min-h-[40px]" />
 
           <button
             type="button"

@@ -16,6 +16,15 @@ import { ConsumableRecord } from './consumablesService';
 import { DeviceRecord } from './devicesService';
 
 export type LabelSizePreset = 'thermal_50x30' | 'thermal_70x40' | 'a4_sheet';
+export type LabelLayoutMode = 'combined' | 'qr_focus';
+export type QrErrorCorrectionLevel = 'L' | 'M' | 'Q' | 'H';
+export type QrPayloadFormat = 'INSTITUTIONAL_ID' | 'RAW_DB_ID' | 'JSON_METADATA';
+
+export interface StickerRenderOptions {
+  layoutMode?: LabelLayoutMode;
+  qrErrorCorrection?: QrErrorCorrectionLevel;
+  qrValueOverride?: string;
+}
 
 export interface AssetLabelData {
   kind: 'DEVICE' | 'CONSUMABLE';
@@ -76,6 +85,26 @@ export function buildConsumableLabelData(
     subtitle: `${categoryName || 'مادة كمية'} (${item.unitOfMeasure})`,
     location: item.storageLocation || 'المخزن الرئيسي',
   };
+}
+
+export function formatAssetQrPayload(
+  label: Pick<AssetLabelData, 'kind' | 'id' | 'code'>,
+  format: QrPayloadFormat = 'INSTITUTIONAL_ID'
+): string {
+  switch (format) {
+    case 'RAW_DB_ID':
+      return label.id;
+    case 'JSON_METADATA':
+      return JSON.stringify({
+        sys: 'SAYEDMART',
+        kind: label.kind === 'DEVICE' ? 'DEV' : 'CON',
+        id: label.id,
+        code: label.code,
+      });
+    case 'INSTITUTIONAL_ID':
+    default:
+      return `SAYEDMART:${label.kind === 'DEVICE' ? 'DEV' : 'CON'}:${label.id}`;
+  }
 }
 
 export async function checkBarcodeAvailability(rawCode: string): Promise<{
@@ -188,10 +217,51 @@ export async function resolveAssetByScannedCode(
   const trimmed = rawInput.trim();
   if (!trimmed) return null;
 
-  // 1. Direct QR Payload: SAYEDMART:DEV:<id> or SAYEDMART:CON:<id>
+  // 1. Direct QR Payload: JSON metadata, SAYEDMART:DEV:<id>, or SAYEDMART:CON:<id>
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(trimmed) as {
+        id?: string;
+        kind?: string;
+        code?: string;
+      };
+      const parsedId = typeof parsed.id === 'string' ? parsed.id.trim() : '';
+      if (parsedId && /^[a-zA-Z0-9_-]{1,128}$/.test(parsedId)) {
+        if (parsed.kind !== 'CON' && parsed.kind !== 'CONSUMABLE') {
+          try {
+            const dSnap = await getDoc(doc(db, 'devices', parsedId));
+            if (dSnap.exists()) {
+              const device = { id: dSnap.id, ...(dSnap.data() as Omit<DeviceRecord, 'id'>) };
+              const ctx = await resolveDeviceContext(device);
+              return { kind: 'DEVICE', device, ...ctx };
+            }
+          } catch (err) {
+            handleFirestoreError(err, OperationType.GET, `devices/${parsedId}`);
+          }
+        }
+        try {
+          const iSnap = await getDoc(doc(db, 'items', parsedId));
+          if (iSnap.exists()) {
+            const base = { id: iSnap.id, ...(iSnap.data() as Omit<ConsumableRecord, 'id'>) };
+            const ctx = await resolveConsumableContext(base);
+            return {
+              kind: 'CONSUMABLE',
+              item: { ...base, currentQuantity: ctx.currentQuantity },
+              categoryName: ctx.categoryName,
+            };
+          }
+        } catch (err) {
+          handleFirestoreError(err, OperationType.GET, `items/${parsedId}`);
+        }
+      }
+    } catch {
+      // Not valid JSON, continue standard lookup
+    }
+  }
+
   if (trimmed.startsWith('SAYEDMART:DEV:')) {
     const devId = trimmed.replace('SAYEDMART:DEV:', '').trim();
-    if (devId) {
+    if (devId && /^[a-zA-Z0-9_-]{1,128}$/.test(devId)) {
       try {
         const dSnap = await getDoc(doc(db, 'devices', devId));
         if (dSnap.exists()) {
@@ -207,7 +277,7 @@ export async function resolveAssetByScannedCode(
 
   if (trimmed.startsWith('SAYEDMART:CON:')) {
     const itemId = trimmed.replace('SAYEDMART:CON:', '').trim();
-    if (itemId) {
+    if (itemId && /^[a-zA-Z0-9_-]{1,128}$/.test(itemId)) {
       try {
         const iSnap = await getDoc(doc(db, 'items', itemId));
         if (iSnap.exists()) {
@@ -310,6 +380,35 @@ export async function resolveAssetByScannedCode(
     handleFirestoreError(err, OperationType.LIST, 'items');
   }
 
+  // 4. Direct raw database document ID lookup (devices/{id} or items/{id})
+  if (/^[a-zA-Z0-9_-]{3,128}$/.test(trimmed)) {
+    try {
+      const dSnap = await getDoc(doc(db, 'devices', trimmed));
+      if (dSnap.exists()) {
+        const device = { id: dSnap.id, ...(dSnap.data() as Omit<DeviceRecord, 'id'>) };
+        const ctx = await resolveDeviceContext(device);
+        return { kind: 'DEVICE', device, ...ctx };
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.GET, `devices/${trimmed}`);
+    }
+
+    try {
+      const iSnap = await getDoc(doc(db, 'items', trimmed));
+      if (iSnap.exists()) {
+        const base = { id: iSnap.id, ...(iSnap.data() as Omit<ConsumableRecord, 'id'>) };
+        const ctx = await resolveConsumableContext(base);
+        return {
+          kind: 'CONSUMABLE',
+          item: { ...base, currentQuantity: ctx.currentQuantity },
+          categoryName: ctx.categoryName,
+        };
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.GET, `items/${trimmed}`);
+    }
+  }
+
   return null;
 }
 
@@ -350,17 +449,65 @@ export function generateBarcodeDataUrl(
 
 export async function generateQrDataUrl(
   value: string,
-  size = 180
+  size = 180,
+  errorCorrectionLevel: QrErrorCorrectionLevel = 'M'
 ): Promise<string> {
   return QRCode.toDataURL(value || 'SAYEDMART', {
     width: size,
     margin: 1,
-    errorCorrectionLevel: 'M',
+    errorCorrectionLevel,
     color: {
       dark: '#0F2544',
       light: '#FFFFFF',
     },
   });
+}
+
+export async function generateQrSvgString(
+  value: string,
+  opts?: { size?: number; errorCorrectionLevel?: QrErrorCorrectionLevel }
+): Promise<string> {
+  return QRCode.toString(value || 'SAYEDMART', {
+    type: 'svg',
+    width: opts?.size ?? 256,
+    margin: 1,
+    errorCorrectionLevel: opts?.errorCorrectionLevel ?? 'M',
+    color: {
+      dark: '#0F2544',
+      light: '#FFFFFF',
+    },
+  });
+}
+
+export async function downloadQrPng(
+  value: string,
+  fileName: string,
+  opts?: { size?: number; errorCorrectionLevel?: QrErrorCorrectionLevel }
+): Promise<void> {
+  const url = await generateQrDataUrl(
+    value,
+    opts?.size ?? 512,
+    opts?.errorCorrectionLevel ?? 'M'
+  );
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName.endsWith('.png') ? fileName : `${fileName}.png`;
+  link.click();
+}
+
+export async function downloadQrSvg(
+  value: string,
+  fileName: string,
+  errorCorrectionLevel: QrErrorCorrectionLevel = 'M'
+): Promise<void> {
+  const svg = await generateQrSvgString(value, { size: 320, errorCorrectionLevel });
+  const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName.endsWith('.svg') ? fileName : `${fileName}.svg`;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -387,8 +534,13 @@ function truncateTextToFit(
 
 export async function renderStickerCanvas(
   label: AssetLabelData,
-  preset: LabelSizePreset
+  preset: LabelSizePreset,
+  options?: StickerRenderOptions
 ): Promise<HTMLCanvasElement> {
+  const layoutMode: LabelLayoutMode = options?.layoutMode ?? 'combined';
+  const qrErrorCorrection: QrErrorCorrectionLevel = options?.qrErrorCorrection ?? 'M';
+  const qrPayload = options?.qrValueOverride || label.qrValue;
+
   // High-DPI dimensions (at ~12 px/mm)
   const dims =
     preset === 'thermal_50x30'
@@ -443,6 +595,92 @@ export async function renderStickerCanvas(
     4 + headerH * 0.74
   );
 
+  if (layoutMode === 'qr_focus') {
+    const qrSize = preset === 'thermal_50x30' ? 236 : 332;
+    const qrSrc = await generateQrDataUrl(qrPayload, qrSize, qrErrorCorrection);
+    const qrImg = await loadImage(qrSrc);
+
+    const bodyTop = headerH + 22;
+    const paddingX = 24;
+    const qrX = paddingX;
+    const qrY = bodyTop + Math.max(0, (dims.height - bodyTop - 18 - qrSize) / 2);
+
+    ctx.strokeStyle = '#E2E8F0';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(qrX - 4, qrY - 4, qrSize + 8, qrSize + 8);
+    ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
+
+    const rightEdge = dims.width - paddingX;
+    const textAreaWidth = dims.width - paddingX * 2 - qrSize - 28;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'top';
+
+    ctx.fillStyle = '#64748B';
+    ctx.font =
+      preset === 'thermal_50x30'
+        ? '600 14px Cairo, Tahoma, sans-serif'
+        : '600 17px Cairo, Tahoma, sans-serif';
+    ctx.fillText(
+      label.kind === 'DEVICE' ? 'بطاقة رمز QR — جهاز فردي' : 'بطاقة رمز QR — مادة كمية',
+      rightEdge,
+      bodyTop
+    );
+
+    ctx.fillStyle = '#0F2544';
+    ctx.font =
+      preset === 'thermal_50x30'
+        ? 'bold 28px "IBM Plex Mono", monospace'
+        : 'bold 36px "IBM Plex Mono", monospace';
+    const codeY = bodyTop + (preset === 'thermal_50x30' ? 24 : 30);
+    ctx.fillText(label.code, rightEdge, codeY);
+
+    ctx.fillStyle = '#0F172A';
+    ctx.font =
+      preset === 'thermal_50x30'
+        ? 'bold 21px Cairo, Tahoma, sans-serif'
+        : 'bold 28px Cairo, Tahoma, sans-serif';
+    const titleY = codeY + (preset === 'thermal_50x30' ? 38 : 48);
+    ctx.fillText(truncateTextToFit(ctx, label.title, textAreaWidth), rightEdge, titleY);
+
+    ctx.fillStyle = '#475569';
+    ctx.font =
+      preset === 'thermal_50x30'
+        ? '600 16px Cairo, Tahoma, sans-serif'
+        : '600 20px Cairo, Tahoma, sans-serif';
+    const subText = [label.subtitle, label.location].filter(Boolean).join(' · ');
+    const subY = titleY + (preset === 'thermal_50x30' ? 34 : 44);
+    ctx.fillText(truncateTextToFit(ctx, subText, textAreaWidth), rightEdge, subY);
+
+    // Explicit Database ID Box
+    const dbBoxY = dims.height - (preset === 'thermal_50x30' ? 66 : 84);
+    const dbBoxH = preset === 'thermal_50x30' ? 44 : 56;
+    ctx.fillStyle = '#F8FAFC';
+    ctx.fillRect(qrX + qrSize + 24, dbBoxY, textAreaWidth, dbBoxH);
+    ctx.strokeStyle = '#CBD5E1';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(qrX + qrSize + 24, dbBoxY, textAreaWidth, dbBoxH);
+
+    ctx.fillStyle = '#64748B';
+    ctx.font =
+      preset === 'thermal_50x30'
+        ? '600 12px Cairo, Tahoma, sans-serif'
+        : '600 14px Cairo, Tahoma, sans-serif';
+    ctx.fillText('معرّف قاعدة البيانات (DB ID)', rightEdge - 10, dbBoxY + 5);
+
+    ctx.fillStyle = '#0F2544';
+    ctx.font =
+      preset === 'thermal_50x30'
+        ? 'bold 14px "IBM Plex Mono", monospace'
+        : 'bold 17px "IBM Plex Mono", monospace';
+    ctx.fillText(
+      truncateTextToFit(ctx, label.id, textAreaWidth - 20),
+      rightEdge - 10,
+      dbBoxY + (preset === 'thermal_50x30' ? 22 : 28)
+    );
+
+    return canvas;
+  }
+
   // Generate Barcode and QR images
   const qrSize = preset === 'thermal_50x30' ? 148 : 196;
   const barcodeSrc = generateBarcodeDataUrl(label.barcodeValue, {
@@ -451,7 +689,7 @@ export async function renderStickerCanvas(
     displayValue: true,
     lineColor: '#0F2544',
   });
-  const qrSrc = await generateQrDataUrl(label.qrValue, qrSize);
+  const qrSrc = await generateQrDataUrl(qrPayload, qrSize, qrErrorCorrection);
 
   const [barcodeImg, qrImg] = await Promise.all([
     loadImage(barcodeSrc),
@@ -518,9 +756,10 @@ export async function renderStickerCanvas(
 
 export async function downloadLabelPng(
   label: AssetLabelData,
-  preset: LabelSizePreset
+  preset: LabelSizePreset,
+  options?: StickerRenderOptions
 ): Promise<void> {
-  const canvas = await renderStickerCanvas(label, preset);
+  const canvas = await renderStickerCanvas(label, preset, options);
   const url = canvas.toDataURL('image/png');
   const link = document.createElement('a');
   link.href = url;
@@ -530,7 +769,8 @@ export async function downloadLabelPng(
 
 export async function downloadLabelsPdf(
   labels: AssetLabelData[],
-  preset: LabelSizePreset
+  preset: LabelSizePreset,
+  options?: StickerRenderOptions
 ): Promise<void> {
   if (labels.length === 0) return;
 
@@ -545,7 +785,7 @@ export async function downloadLabelsPdf(
 
     for (let i = 0; i < labels.length; i += 1) {
       if (i > 0) pdf.addPage([widthMm, heightMm], 'landscape');
-      const canvas = await renderStickerCanvas(labels[i], preset);
+      const canvas = await renderStickerCanvas(labels[i], preset, options);
       const imgData = canvas.toDataURL('image/png');
       pdf.addImage(imgData, 'PNG', 0.5, 0.5, widthMm - 1, heightMm - 1);
     }
@@ -584,7 +824,7 @@ export async function downloadLabelsPdf(
     const x = marginX + col * (cellW + gapX);
     const y = marginY + row * (cellH + gapY);
 
-    const canvas = await renderStickerCanvas(labels[i], 'thermal_70x40');
+    const canvas = await renderStickerCanvas(labels[i], 'thermal_70x40', options);
     const imgData = canvas.toDataURL('image/png');
     pdf.addImage(imgData, 'PNG', x, y, cellW, cellH);
   }

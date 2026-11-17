@@ -16,6 +16,7 @@ import {
 import {
   PrintDocumentHeader,
   PrintSignatureFooter,
+  PrintSignatureTriggerButton,
 } from '../components/common/PrintDocumentHeader';
 import { DeviceCardModal } from '../components/devices/DeviceCardModal';
 import { useAuth } from '../context/AuthContext';
@@ -467,6 +468,8 @@ export function DevicesPage() {
             <Download className="w-4 h-4" />
             <span>تصدير Excel/CSV</span>
           </button>
+
+          <PrintSignatureTriggerButton className="min-h-[40px]" />
 
           <button
             type="button"

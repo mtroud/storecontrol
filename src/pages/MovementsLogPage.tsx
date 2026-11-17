@@ -10,6 +10,7 @@ import {
 import {
   PrintDocumentHeader,
   PrintSignatureFooter,
+  PrintSignatureTriggerButton,
 } from '../components/common/PrintDocumentHeader';
 import {
   CentralMovementRecord,
@@ -188,6 +189,7 @@ export function MovementsLogPage() {
             <Download className="w-4 h-4" />
             <span>تصدير Excel</span>
           </button>
+          <PrintSignatureTriggerButton />
           <button
             type="button"
             onClick={() => window.print()}
