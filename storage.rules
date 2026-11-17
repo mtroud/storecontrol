@@ -1,0 +1,43 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    function isVerifiedUser() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isAllowedAssetFile() {
+      return request.resource.size <= 10 * 1024 * 1024 && (
+        request.resource.contentType.matches('image/.*') ||
+        request.resource.contentType == 'application/pdf'
+      );
+    }
+
+    match /devices/{deviceId}/{fileName} {
+      allow read: if isVerifiedUser();
+      allow write: if isVerifiedUser() && isAllowedAssetFile();
+    }
+
+    match /consumables/{itemId}/{fileName} {
+      allow read: if isVerifiedUser();
+      allow write: if isVerifiedUser() && isAllowedAssetFile();
+    }
+
+    match /entries/{entryId}/{fileName} {
+      allow read: if isVerifiedUser();
+      allow write: if isVerifiedUser() && isAllowedAssetFile();
+    }
+
+    match /maintenance/{recordId}/{fileName} {
+      allow read: if isVerifiedUser();
+      allow write: if isVerifiedUser() && isAllowedAssetFile();
+    }
+
+    match /backups/{backupId}/{fileName} {
+      allow read, write: if isVerifiedUser() && request.auth.token.email == 'control.mogma@gmail.com';
+    }
+  }
+}

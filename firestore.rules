@@ -1,0 +1,539 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global Default-Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Identity & Validation Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function sanitizeEmailKey(email) {
+      return email.lower().replace('[^a-z0-9_-]', '_');
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'control.mogma@gmail.com';
+    }
+
+    function userDocExists() {
+      return isVerifiedUser() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isActiveUser() {
+      return isBootstrappedAdmin() || (userDocExists() && userDoc().isActive == true);
+    }
+
+    function hasRole(roles) {
+      return isActiveUser() && (
+        isBootstrappedAdmin() ||
+        (userDocExists() && userDoc().role in roles)
+      );
+    }
+
+    function isSystemAdmin() {
+      return isBootstrappedAdmin() || (
+        userDocExists() && userDoc().isActive == true && userDoc().role == 'SYSTEM_ADMIN'
+      );
+    }
+
+    function isWarehouseManager() {
+      return hasRole(['SYSTEM_ADMIN', 'WAREHOUSE_MANAGER']);
+    }
+
+    function isWarehouseStaff() {
+      return hasRole(['SYSTEM_ADMIN', 'WAREHOUSE_MANAGER', 'WAREHOUSE_STAFF']);
+    }
+
+    function isViewerOrAbove() {
+      return hasRole(['SYSTEM_ADMIN', 'WAREHOUSE_MANAGER', 'WAREHOUSE_STAFF', 'VIEWER']);
+    }
+
+    // Connection check document (Phase 2 verification)
+    match /test/{docId} {
+      allow get: if isValidId(docId) && docId == 'connection';
+      allow list, write: if false;
+    }
+
+    // 3. Entity Validators
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'email', 'fullName', 'role', 'isActive']) &&
+        data.keys().hasOnly([
+          'uid', 'username', 'email', 'fullName', 'role', 'isActive',
+          'departmentName', 'lastLoginAt', 'lastLogoutAt', 'lastActivityAt',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.uid) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 120 &&
+        data.role in ['SYSTEM_ADMIN', 'WAREHOUSE_MANAGER', 'WAREHOUSE_STAFF', 'VIEWER'] &&
+        data.isActive is bool &&
+        (!('username' in data) || (data.username is string && data.username.size() <= 64)) &&
+        (!('departmentName' in data) || (data.departmentName is string && data.departmentName.size() <= 140));
+    }
+
+    function isValidCategory(data) {
+      return data.keys().hasAll(['id', 'name', 'codePrefix', 'isActive']) &&
+        data.keys().hasOnly(['id', 'name', 'codePrefix', 'description', 'isActive', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 100 &&
+        data.codePrefix is string && data.codePrefix.size() >= 2 && data.codePrefix.size() <= 12 &&
+        data.isActive is bool &&
+        (!('description' in data) || (data.description is string && data.description.size() <= 300));
+    }
+
+    function isValidConsumableItem(data) {
+      return data.keys().hasAll(['id', 'itemCode', 'name', 'categoryId', 'unitOfMeasure', 'minStock', 'reorderPoint']) &&
+        data.keys().hasOnly([
+          'id', 'itemCode', 'name', 'categoryId', 'unitOfMeasure', 'minStock',
+          'reorderPoint', 'reserveStock', 'storageLocation', 'barcode', 'imageUrl',
+          'notes', 'isArchived', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.itemCode is string && data.itemCode.size() >= 2 && data.itemCode.size() <= 40 &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 140 &&
+        isValidId(data.categoryId) &&
+        data.unitOfMeasure is string && data.unitOfMeasure.size() >= 1 && data.unitOfMeasure.size() <= 40 &&
+        data.minStock is number && data.minStock >= 0 &&
+        data.reorderPoint is number && data.reorderPoint >= 0 &&
+        (!('reserveStock' in data) || (data.reserveStock is number && data.reserveStock >= 0)) &&
+        (!('storageLocation' in data) || (data.storageLocation is string && data.storageLocation.size() <= 120)) &&
+        (!('barcode' in data) || (data.barcode is string && data.barcode.size() <= 64)) &&
+        (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 500)) &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 500)) &&
+        (!('isArchived' in data) || data.isArchived is bool);
+    }
+
+    function isValidDevice(data) {
+      return data.keys().hasAll(['id', 'inventoryNumber', 'name', 'categoryId', 'storageStatus', 'isArchived']) &&
+        data.keys().hasOnly([
+          'id', 'inventoryNumber', 'name', 'categoryId', 'manufacturer', 'model',
+          'serialNumber', 'purchaseDate', 'receivedDate', 'acquisitionSource',
+          'technicalStatus', 'storageStatus', 'currentLocation',
+          'departmentId', 'unitId', 'recipientName', 'issuedDate', 'returnedDate',
+          'warrantyPeriod', 'barcode', 'qrCodeValue',
+          'imageUrl', 'notes', 'isArchived', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.inventoryNumber is string && data.inventoryNumber.size() >= 3 && data.inventoryNumber.size() <= 50 &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 150 &&
+        isValidId(data.categoryId) &&
+        data.storageStatus in ['IN_WAREHOUSE', 'ISSUED', 'IN_MAINTENANCE', 'DAMAGED', 'ARCHIVED'] &&
+        data.isArchived is bool &&
+        (!('manufacturer' in data) || (data.manufacturer is string && data.manufacturer.size() <= 100)) &&
+        (!('model' in data) || (data.model is string && data.model.size() <= 100)) &&
+        (!('serialNumber' in data) || (data.serialNumber is string && data.serialNumber.size() <= 100)) &&
+        (!('purchaseDate' in data) || (data.purchaseDate is string && data.purchaseDate.size() <= 30)) &&
+        (!('receivedDate' in data) || (data.receivedDate is string && data.receivedDate.size() <= 30)) &&
+        (!('acquisitionSource' in data) || (data.acquisitionSource is string && data.acquisitionSource.size() <= 160)) &&
+        (!('technicalStatus' in data) || (data.technicalStatus is string && data.technicalStatus.size() <= 50)) &&
+        (!('currentLocation' in data) || (data.currentLocation is string && data.currentLocation.size() <= 150)) &&
+        (!('departmentId' in data) || (data.departmentId is string && data.departmentId.size() <= 128)) &&
+        (!('unitId' in data) || (data.unitId is string && data.unitId.size() <= 128)) &&
+        (!('recipientName' in data) || (data.recipientName is string && data.recipientName.size() <= 120)) &&
+        (!('issuedDate' in data) || (data.issuedDate is string && data.issuedDate.size() <= 30)) &&
+        (!('returnedDate' in data) || (data.returnedDate is string && data.returnedDate.size() <= 30)) &&
+        (!('warrantyPeriod' in data) || (data.warrantyPeriod is string && data.warrantyPeriod.size() <= 80)) &&
+        (!('barcode' in data) || (data.barcode is string && data.barcode.size() <= 64)) &&
+        (!('qrCodeValue' in data) || (data.qrCodeValue is string && data.qrCodeValue.size() <= 160)) &&
+        (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 500)) &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 800));
+    }
+
+    function isValidDepartment(data) {
+      return data.keys().hasAll(['id', 'name', 'isActive']) &&
+        data.keys().hasOnly(['id', 'name', 'managerName', 'phone', 'location', 'notes', 'isActive', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 120 &&
+        data.isActive is bool &&
+        (!('managerName' in data) || (data.managerName is string && data.managerName.size() <= 120)) &&
+        (!('phone' in data) || (data.phone is string && data.phone.size() <= 30)) &&
+        (!('location' in data) || (data.location is string && data.location.size() <= 150)) &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 400));
+    }
+
+    function isValidUnit(data) {
+      return data.keys().hasAll(['id', 'departmentId', 'name', 'isActive']) &&
+        data.keys().hasOnly(['id', 'departmentId', 'name', 'supervisorName', 'phone', 'location', 'notes', 'isActive', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        isValidId(data.departmentId) &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 120 &&
+        data.isActive is bool &&
+        (!('supervisorName' in data) || (data.supervisorName is string && data.supervisorName.size() <= 120)) &&
+        (!('phone' in data) || (data.phone is string && data.phone.size() <= 30)) &&
+        (!('location' in data) || (data.location is string && data.location.size() <= 150)) &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 400));
+    }
+
+    function isValidStockBalance(data) {
+      return data.keys().hasAll(['itemId', 'currentQuantity']) &&
+        data.keys().hasOnly(['itemId', 'currentQuantity', 'reservedQuantity', 'updatedAt']) &&
+        isValidId(data.itemId) &&
+        data.currentQuantity is number && data.currentQuantity >= 0 &&
+        (!('reservedQuantity' in data) || (data.reservedQuantity is number && data.reservedQuantity >= 0));
+    }
+
+    function isValidStockMovement(data) {
+      return data.keys().hasAll(['id', 'movementNumber', 'type', 'inventoryCode', 'assetName', 'performedByUid']) &&
+        data.keys().hasOnly([
+          'id', 'movementNumber', 'type', 'inventoryCode', 'assetName',
+          'previousLocation', 'newLocation', 'recipientName', 'voucherNumber',
+          'performedByUid', 'performedByName', 'notes', 'createdAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.movementNumber is string && data.movementNumber.size() >= 2 && data.movementNumber.size() <= 50 &&
+        data.type in ['ENTRY', 'ISSUE', 'RETURN', 'TRANSFER', 'SEND_TO_MAINTENANCE', 'RECEIVE_FROM_MAINTENANCE', 'ADJUSTMENT', 'ARCHIVE'] &&
+        data.inventoryCode is string && data.inventoryCode.size() <= 50 &&
+        data.assetName is string && data.assetName.size() <= 150 &&
+        data.performedByUid == request.auth.uid &&
+        (!('previousLocation' in data) || (data.previousLocation is string && data.previousLocation.size() <= 150)) &&
+        (!('newLocation' in data) || (data.newLocation is string && data.newLocation.size() <= 150)) &&
+        (!('recipientName' in data) || (data.recipientName is string && data.recipientName.size() <= 120)) &&
+        (!('voucherNumber' in data) || (data.voucherNumber is string && data.voucherNumber.size() <= 50)) &&
+        (!('performedByName' in data) || (data.performedByName is string && data.performedByName.size() <= 120)) &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 500));
+    }
+
+    function isValidMaintenanceRecord(data) {
+      return data.keys().hasAll(['id', 'deviceId', 'inventoryCode', 'deviceName', 'faultType', 'status']) &&
+        data.keys().hasOnly([
+          'id', 'deviceId', 'inventoryCode', 'deviceName', 'faultType',
+          'problemDescription', 'sentDate', 'assignedUnit', 'status',
+          'completedDate', 'cost', 'notes', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.deviceId) &&
+        data.inventoryCode is string && data.inventoryCode.size() <= 50 &&
+        data.deviceName is string && data.deviceName.size() <= 150 &&
+        data.faultType is string && data.faultType.size() <= 120 &&
+        data.status in ['NEEDS_MAINTENANCE', 'IN_PROGRESS', 'COMPLETED', 'UNREPAIRABLE'] &&
+        (!('problemDescription' in data) || (data.problemDescription is string && data.problemDescription.size() <= 600)) &&
+        (!('sentDate' in data) || (data.sentDate is string && data.sentDate.size() <= 30)) &&
+        (!('assignedUnit' in data) || (data.assignedUnit is string && data.assignedUnit.size() <= 150)) &&
+        (!('completedDate' in data) || (data.completedDate is string && data.completedDate.size() <= 30)) &&
+        (!('cost' in data) || (data.cost is number && data.cost >= 0)) &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 500));
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['id', 'actorUid', 'action']) &&
+        data.keys().hasOnly(['id', 'actorUid', 'actorEmail', 'action', 'targetCollection', 'targetId', 'details', 'createdAt']) &&
+        isValidId(data.id) &&
+        data.actorUid == request.auth.uid &&
+        data.action is string && data.action.size() >= 2 && data.action.size() <= 80 &&
+        (!('actorEmail' in data) || (data.actorEmail is string && data.actorEmail.size() <= 160)) &&
+        (!('targetCollection' in data) || (data.targetCollection is string && data.targetCollection.size() <= 60)) &&
+        (!('targetId' in data) || (data.targetId is string && data.targetId.size() <= 128)) &&
+        (!('details' in data) || (data.details is string && data.details.size() <= 1000)) &&
+        (!('createdAt' in data) || data.createdAt == request.time);
+    }
+
+    function isValidUserInvite(data) {
+      return data.keys().hasAll(['id', 'email', 'fullName', 'role', 'isActive', 'createdByUid']) &&
+        data.keys().hasOnly([
+          'id', 'email', 'username', 'fullName', 'role', 'departmentName',
+          'isActive', 'createdByUid', 'createdAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 120 &&
+        data.role in ['SYSTEM_ADMIN', 'WAREHOUSE_MANAGER', 'WAREHOUSE_STAFF', 'VIEWER'] &&
+        data.isActive is bool &&
+        data.createdByUid == request.auth.uid &&
+        (!('username' in data) || (data.username is string && data.username.size() <= 64)) &&
+        (!('departmentName' in data) || (data.departmentName is string && data.departmentName.size() <= 140));
+    }
+
+    function isValidSystemSettings(data) {
+      return data.keys().hasAll(['id', 'organizationName', 'sessionTimeoutMinutes']) &&
+        data.keys().hasOnly([
+          'id', 'organizationName', 'departmentName', 'divisionName',
+          'sessionTimeoutMinutes', 'inventoryPrefix', 'lowStockAlertEnabled',
+          'autoBackupReminderDays', 'lastBackupAt', 'lastBackupBy', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.organizationName is string && data.organizationName.size() >= 2 && data.organizationName.size() <= 160 &&
+        data.sessionTimeoutMinutes is number && data.sessionTimeoutMinutes >= 5 && data.sessionTimeoutMinutes <= 480 &&
+        (!('departmentName' in data) || (data.departmentName is string && data.departmentName.size() <= 160)) &&
+        (!('divisionName' in data) || (data.divisionName is string && data.divisionName.size() <= 160)) &&
+        (!('inventoryPrefix' in data) || (data.inventoryPrefix is string && data.inventoryPrefix.size() <= 20)) &&
+        (!('lowStockAlertEnabled' in data) || data.lowStockAlertEnabled is bool) &&
+        (!('autoBackupReminderDays' in data) || (data.autoBackupReminderDays is number && data.autoBackupReminderDays >= 1)) &&
+        (!('lastBackupAt' in data) || (data.lastBackupAt is string && data.lastBackupAt.size() <= 40)) &&
+        (!('lastBackupBy' in data) || (data.lastBackupBy is string && data.lastBackupBy.size() <= 120));
+    }
+
+    // 4. Collection Rules
+
+    // Users & RBAC Profiles (PII Isolated)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isVerifiedUser() && (
+        request.auth.uid == userId || isSystemAdmin()
+      );
+      allow list: if isVerifiedUser() && (
+        isSystemAdmin() || resource.data.uid == request.auth.uid
+      );
+      allow create: if isValidId(userId) &&
+        isValidUserProfile(incoming()) &&
+        incoming().uid == userId && (
+          isSystemAdmin() ||
+          (isBootstrappedAdmin() && userId == request.auth.uid && incoming().role == 'SYSTEM_ADMIN') ||
+          (
+            isVerifiedUser() &&
+            userId == request.auth.uid &&
+            incoming().isActive == true &&
+            incoming().email.lower() == request.auth.token.email.lower() &&
+            exists(/databases/$(database)/documents/userInvites/$(sanitizeEmailKey(request.auth.token.email))) &&
+            get(/databases/$(database)/documents/userInvites/$(sanitizeEmailKey(request.auth.token.email))).data.isActive == true &&
+            incoming().role == get(/databases/$(database)/documents/userInvites/$(sanitizeEmailKey(request.auth.token.email))).data.role
+          )
+        );
+      allow update: if isValidId(userId) &&
+        isValidUserProfile(incoming()) &&
+        incoming().uid == existing().uid && (
+          isSystemAdmin() ||
+          (
+            isVerifiedUser() &&
+            request.auth.uid == userId &&
+            existing().isActive == true &&
+            incoming().role == existing().role &&
+            incoming().isActive == existing().isActive &&
+            incoming().email == existing().email &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['lastLoginAt', 'lastLogoutAt', 'lastActivityAt', 'updatedAt'])
+          )
+        );
+      allow delete: if false;
+    }
+
+    // Pre-authorized Employee Invitations (Admin Controlled)
+    match /userInvites/{inviteId} {
+      allow get: if isValidId(inviteId) && isVerifiedUser() && (
+        isSystemAdmin() || inviteId == sanitizeEmailKey(request.auth.token.email)
+      );
+      allow list: if isVerifiedUser() && isSystemAdmin();
+      allow create: if isValidId(inviteId) && isSystemAdmin() && isValidUserInvite(incoming()) && incoming().id == inviteId;
+      allow update: if isValidId(inviteId) && isSystemAdmin() && isValidUserInvite(incoming()) && incoming().id == existing().id;
+      allow delete: if isValidId(inviteId) && isSystemAdmin();
+    }
+
+    // Categories
+    match /categories/{categoryId} {
+      allow get: if isValidId(categoryId) && isViewerOrAbove();
+      allow list: if isViewerOrAbove();
+      allow create: if isValidId(categoryId) && isWarehouseManager() && isValidCategory(incoming()) && incoming().id == categoryId;
+      allow update: if isValidId(categoryId) && isWarehouseManager() && isValidCategory(incoming()) && incoming().id == existing().id;
+      allow delete: if false;
+    }
+
+    // Consumable Items
+    match /items/{itemId} {
+      allow get: if isValidId(itemId) && isViewerOrAbove();
+      allow list: if isViewerOrAbove();
+      allow create: if isValidId(itemId) && isWarehouseStaff() && isValidConsumableItem(incoming()) && incoming().id == itemId;
+      allow update: if isValidId(itemId) && isWarehouseStaff() && isValidConsumableItem(incoming()) && incoming().id == existing().id;
+      allow delete: if false;
+    }
+
+    // Individual Devices
+    match /devices/{deviceId} {
+      allow get: if isValidId(deviceId) && isViewerOrAbove();
+      allow list: if isViewerOrAbove();
+      allow create: if isValidId(deviceId) && isWarehouseStaff() && isValidDevice(incoming()) && incoming().id == deviceId;
+      allow update: if isValidId(deviceId) && isWarehouseStaff() && isValidDevice(incoming()) && incoming().id == existing().id && (
+        isWarehouseManager() ||
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'storageStatus', 'technicalStatus', 'currentLocation',
+          'departmentId', 'unitId', 'recipientName',
+          'issuedDate', 'returnedDate', 'imageUrl', 'notes', 'updatedAt'
+        ])
+      );
+      allow delete: if false;
+
+      match /history/{historyId} {
+        allow get: if isValidId(deviceId) && isValidId(historyId) && isViewerOrAbove();
+        allow list: if isValidId(deviceId) && isViewerOrAbove();
+        allow create: if isValidId(deviceId) && isValidId(historyId) && isWarehouseStaff() &&
+          (exists(/databases/$(database)/documents/devices/$(deviceId)) ||
+           existsAfter(/databases/$(database)/documents/devices/$(deviceId))) &&
+          incoming().deviceId == deviceId &&
+          incoming().actorUid == request.auth.uid;
+        allow update, delete: if false;
+      }
+
+      match /attachments/{attachmentId} {
+        allow get: if isValidId(deviceId) && isValidId(attachmentId) && isViewerOrAbove();
+        allow list: if isValidId(deviceId) && isViewerOrAbove();
+        allow create: if isValidId(deviceId) && isValidId(attachmentId) && isWarehouseStaff() &&
+          exists(/databases/$(database)/documents/devices/$(deviceId)) &&
+          incoming().deviceId == deviceId &&
+          incoming().uploadedByUid == request.auth.uid;
+        allow delete: if isValidId(deviceId) && isValidId(attachmentId) && isWarehouseManager();
+        allow update: if false;
+      }
+    }
+
+    // Departments & Units
+    match /departments/{departmentId} {
+      allow get: if isValidId(departmentId) && isViewerOrAbove();
+      allow list: if isViewerOrAbove();
+      allow create: if isValidId(departmentId) && isWarehouseManager() && isValidDepartment(incoming()) && incoming().id == departmentId;
+      allow update: if isValidId(departmentId) && isWarehouseManager() && isValidDepartment(incoming()) && incoming().id == existing().id;
+      allow delete: if false;
+    }
+
+    match /units/{unitId} {
+      allow get: if isValidId(unitId) && isViewerOrAbove();
+      allow list: if isViewerOrAbove();
+      allow create: if isValidId(unitId) && isWarehouseManager() && isValidUnit(incoming()) && incoming().id == unitId &&
+        exists(/databases/$(database)/documents/departments/$(incoming().departmentId));
+      allow update: if isValidId(unitId) && isWarehouseManager() && isValidUnit(incoming()) && incoming().id == existing().id;
+      allow delete: if false;
+    }
+
+    // Stock Balances
+    match /stockBalances/{itemId} {
+      allow get: if isValidId(itemId) && isViewerOrAbove();
+      allow list: if isViewerOrAbove();
+      allow create, update: if isValidId(itemId) && isWarehouseStaff() && isValidStockBalance(incoming()) && incoming().itemId == itemId;
+      allow delete: if false;
+    }
+
+    // Stock Vouchers (Entries, Issues, Returns, Transfers, Adjustments)
+    match /stockEntries/{entryId} {
+      allow get: if isValidId(entryId) && isViewerOrAbove();
+      allow list: if isViewerOrAbove();
+      allow create: if isValidId(entryId) && isWarehouseStaff() && incoming().recordedByUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /stockIssues/{issueId} {
+      allow get: if isValidId(issueId) && isViewerOrAbove();
+      allow list: if isViewerOrAbove();
+      allow create: if isValidId(issueId) && isWarehouseStaff() && incoming().issuedByUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /stockReturns/{returnId} {
+      allow get: if isValidId(returnId) && isViewerOrAbove();
+      allow list: if isViewerOrAbove();
+      allow create: if isValidId(returnId) && isWarehouseStaff() && incoming().receivedByUid == request.auth.uid;
+      allow update: if isValidId(returnId) && isWarehouseManager();
+      allow delete: if false;
+    }
+
+    match /assetTransfers/{transferId} {
+      allow get: if isValidId(transferId) && isViewerOrAbove();
+      allow list: if isViewerOrAbove();
+      allow create: if isValidId(transferId) && isWarehouseManager() && incoming().executedByUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Immutable Central Stock Movements Log
+    match /stockMovements/{movementId} {
+      allow get: if isValidId(movementId) && isViewerOrAbove();
+      allow list: if isViewerOrAbove();
+      allow create: if isValidId(movementId) && isWarehouseStaff() && isValidStockMovement(incoming()) && incoming().id == movementId;
+      allow update, delete: if false;
+    }
+
+    match /stockAdjustments/{adjustmentId} {
+      allow get: if isValidId(adjustmentId) && isWarehouseManager();
+      allow list: if isWarehouseManager();
+      allow create: if isValidId(adjustmentId) && isWarehouseManager() && incoming().approvedByUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Electronic Inventory Audits
+    match /inventorySessions/{sessionId} {
+      allow get: if isValidId(sessionId) && isViewerOrAbove();
+      allow list: if isViewerOrAbove();
+      allow create: if isValidId(sessionId) && isWarehouseManager() && incoming().createdByUid == request.auth.uid;
+      allow update: if isValidId(sessionId) && existing().status != 'APPROVED' && (
+        isWarehouseManager() ||
+        (
+          isWarehouseStaff() &&
+          existing().status == 'IN_PROGRESS' &&
+          incoming().status == existing().status &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'scannedCount', 'matchedCount', 'mismatchCount', 'missingCount', 'unregisteredCount', 'updatedAt'
+          ])
+        )
+      );
+      allow delete: if false;
+    }
+
+    match /inventoryResults/{resultId} {
+      allow get: if isValidId(resultId) && isViewerOrAbove();
+      allow list: if isViewerOrAbove();
+      allow create, update: if isValidId(resultId) && isWarehouseStaff() && incoming().scannedByUid == request.auth.uid;
+      allow delete: if false;
+    }
+
+    // Maintenance Records
+    match /maintenanceRecords/{recordId} {
+      allow get: if isValidId(recordId) && isViewerOrAbove();
+      allow list: if isViewerOrAbove();
+      allow create: if isValidId(recordId) && isWarehouseStaff() && isValidMaintenanceRecord(incoming()) && incoming().id == recordId;
+      allow update: if isValidId(recordId) && isWarehouseStaff() && isValidMaintenanceRecord(incoming()) && incoming().id == existing().id;
+      allow delete: if false;
+    }
+
+    // Unique Barcode & Inventory Number Index
+    match /barcodeIndex/{code} {
+      allow get: if isValidId(code) && isViewerOrAbove();
+      allow list: if isViewerOrAbove();
+      allow create: if isValidId(code) && isWarehouseStaff() && !exists(/databases/$(database)/documents/barcodeIndex/$(code));
+      allow update: if isValidId(code) && isWarehouseManager();
+      allow delete: if false;
+    }
+
+    // Immutable Security Audit Logs
+    match /auditLogs/{logId} {
+      allow get: if isValidId(logId) && isSystemAdmin();
+      allow list: if isSystemAdmin();
+      allow create: if isValidId(logId) && isVerifiedUser() && isValidAuditLog(incoming()) && incoming().id == logId;
+      allow update, delete: if false;
+    }
+
+    // Internal System Notifications
+    match /notifications/{notificationId} {
+      allow get: if isValidId(notificationId) && isViewerOrAbove();
+      allow list: if isViewerOrAbove();
+      allow create: if isValidId(notificationId) && isWarehouseStaff();
+      allow update: if isValidId(notificationId) && isViewerOrAbove() && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+      allow delete: if isSystemAdmin();
+    }
+
+    // System Settings & Backup Metadata
+    match /settings/{settingId} {
+      allow get: if isValidId(settingId) && isViewerOrAbove();
+      allow list: if isViewerOrAbove();
+      allow create, update: if isValidId(settingId) && isSystemAdmin() && isValidSystemSettings(incoming()) && incoming().id == settingId;
+      allow delete: if false;
+    }
+  }
+}

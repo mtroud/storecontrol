@@ -1,0 +1,495 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "حساب موظف مخول لاستخدام النظام وصلاحياته المعتمدة",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "username": { "type": "string", "minLength": 2, "maxLength": 64 },
+        "email": { "type": "string", "format": "email", "maxLength": 160 },
+        "fullName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "role": {
+          "type": "string",
+          "enum": ["SYSTEM_ADMIN", "WAREHOUSE_MANAGER", "WAREHOUSE_STAFF", "VIEWER"]
+        },
+        "isActive": { "type": "boolean" },
+        "departmentName": { "type": "string", "maxLength": 140 },
+        "lastLoginAt": { "type": "string", "format": "date-time" },
+        "lastLogoutAt": { "type": "string", "format": "date-time" },
+        "lastActivityAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "fullName", "role", "isActive"]
+    },
+    "UserInvite": {
+      "title": "UserInvite",
+      "description": "دعوة صلاحية مسبقة لموظف مخول من مدير النظام قبل تسجيل دخوله الأول",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 160 },
+        "username": { "type": "string", "maxLength": 64 },
+        "fullName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "role": {
+          "type": "string",
+          "enum": ["SYSTEM_ADMIN", "WAREHOUSE_MANAGER", "WAREHOUSE_STAFF", "VIEWER"]
+        },
+        "departmentName": { "type": "string", "maxLength": 140 },
+        "isActive": { "type": "boolean" },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "email", "fullName", "role", "isActive", "createdByUid"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "تصنيف الأجهزة والمعدات والمواد",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 2, "maxLength": 100 },
+        "codePrefix": { "type": "string", "minLength": 2, "maxLength": 12 },
+        "description": { "type": "string", "maxLength": 300 },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "codePrefix", "isActive"]
+    },
+    "ConsumableItem": {
+      "title": "ConsumableItem",
+      "description": "تعريف مادة كمية أو استهلاكية",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "itemCode": { "type": "string", "minLength": 2, "maxLength": 40 },
+        "name": { "type": "string", "minLength": 2, "maxLength": 140 },
+        "categoryId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "unitOfMeasure": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "minStock": { "type": "number" },
+        "reorderPoint": { "type": "number" },
+        "reserveStock": { "type": "number" },
+        "storageLocation": { "type": "string", "maxLength": 120 },
+        "barcode": { "type": "string", "maxLength": 64 },
+        "imageUrl": { "type": "string", "maxLength": 500 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "isArchived": { "type": "boolean" }
+      },
+      "required": ["id", "itemCode", "name", "categoryId", "unitOfMeasure", "minStock", "reorderPoint"]
+    },
+    "Device": {
+      "title": "Device",
+      "description": "بطاقة جهاز فردي مستقلة برقم جرد فريد",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "inventoryNumber": { "type": "string", "minLength": 3, "maxLength": 50 },
+        "name": { "type": "string", "minLength": 2, "maxLength": 150 },
+        "categoryId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "manufacturer": { "type": "string", "maxLength": 100 },
+        "model": { "type": "string", "maxLength": 100 },
+        "serialNumber": { "type": "string", "maxLength": 100 },
+        "purchaseDate": { "type": "string", "maxLength": 30 },
+        "receivedDate": { "type": "string", "maxLength": 30 },
+        "acquisitionSource": { "type": "string", "maxLength": 160 },
+        "technicalStatus": { "type": "string", "maxLength": 50 },
+        "storageStatus": {
+          "type": "string",
+          "enum": ["IN_WAREHOUSE", "ISSUED", "IN_MAINTENANCE", "DAMAGED", "ARCHIVED"]
+        },
+        "currentLocation": { "type": "string", "maxLength": 150 },
+        "departmentId": { "type": "string", "maxLength": 128 },
+        "unitId": { "type": "string", "maxLength": 128 },
+        "recipientName": { "type": "string", "maxLength": 120 },
+        "issuedDate": { "type": "string", "maxLength": 30 },
+        "returnedDate": { "type": "string", "maxLength": 30 },
+        "warrantyPeriod": { "type": "string", "maxLength": 80 },
+        "barcode": { "type": "string", "maxLength": 64 },
+        "qrCodeValue": { "type": "string", "maxLength": 160 },
+        "imageUrl": { "type": "string", "maxLength": 500 },
+        "notes": { "type": "string", "maxLength": 800 },
+        "isArchived": { "type": "boolean" }
+      },
+      "required": ["id", "inventoryNumber", "name", "categoryId", "storageStatus", "isArchived"]
+    },
+    "DeviceHistory": {
+      "title": "DeviceHistory",
+      "description": "سجل التعديلات على بطاقة الجهاز",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "deviceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "actorUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "actorName": { "type": "string", "maxLength": 120 },
+        "summary": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "deviceId", "actorUid", "summary"]
+    },
+    "Department": {
+      "title": "Department",
+      "description": "شعبة مستفيدة تابعة لمجمع سيد الشهداء (عليه السلام) الخدمي",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "managerName": { "type": "string", "maxLength": 120 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "location": { "type": "string", "maxLength": 150 },
+        "notes": { "type": "string", "maxLength": 400 },
+        "isActive": { "type": "boolean" }
+      },
+      "required": ["id", "name", "isActive"]
+    },
+    "Unit": {
+      "title": "Unit",
+      "description": "وحدة تابعة لإحدى الشعب المسجلة",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "departmentId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "name": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "supervisorName": { "type": "string", "maxLength": 120 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "location": { "type": "string", "maxLength": 150 },
+        "notes": { "type": "string", "maxLength": 400 },
+        "isActive": { "type": "boolean" }
+      },
+      "required": ["id", "departmentId", "name", "isActive"]
+    },
+    "StockBalance": {
+      "title": "StockBalance",
+      "description": "الرصيد الحالي للمادة الكمية في المخزن",
+      "type": "object",
+      "properties": {
+        "itemId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "currentQuantity": { "type": "number" },
+        "reservedQuantity": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["itemId", "currentQuantity"]
+    },
+    "StockEntry": {
+      "title": "StockEntry",
+      "description": "سند إدخال موجودات إلى المخزن",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "voucherNumber": { "type": "string", "minLength": 2, "maxLength": 50 },
+        "entryDate": { "type": "string", "maxLength": 30 },
+        "assetKind": { "type": "string", "enum": ["DEVICE", "CONSUMABLE"] },
+        "itemName": { "type": "string", "maxLength": 150 },
+        "quantity": { "type": "number" },
+        "source": { "type": "string", "maxLength": 150 },
+        "officialBookNumber": { "type": "string", "maxLength": 80 },
+        "receivedBy": { "type": "string", "maxLength": 120 },
+        "recordedByUid": { "type": "string", "maxLength": 128 },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["id", "voucherNumber", "entryDate", "assetKind", "quantity", "recordedByUid"]
+    },
+    "StockIssue": {
+      "title": "StockIssue",
+      "description": "سند صرف موجودات إلى شعبة أو وحدة",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "voucherNumber": { "type": "string", "minLength": 2, "maxLength": 50 },
+        "issueDate": { "type": "string", "maxLength": 30 },
+        "departmentId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "unitId": { "type": "string", "maxLength": 128 },
+        "recipientName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "recipientPhone": { "type": "string", "maxLength": 30 },
+        "purpose": { "type": "string", "maxLength": 300 },
+        "officialBookNumber": { "type": "string", "maxLength": 80 },
+        "issuedByUid": { "type": "string", "maxLength": 128 },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["id", "voucherNumber", "issueDate", "departmentId", "recipientName", "issuedByUid"]
+    },
+    "StockReturn": {
+      "title": "StockReturn",
+      "description": "سند إرجاع موجودات إلى المخزن",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "voucherNumber": { "type": "string", "minLength": 2, "maxLength": 50 },
+        "returnDate": { "type": "string", "maxLength": 30 },
+        "deviceId": { "type": "string", "maxLength": 128 },
+        "inventoryNumber": { "type": "string", "maxLength": 50 },
+        "departmentId": { "type": "string", "maxLength": 128 },
+        "returnedByName": { "type": "string", "maxLength": 120 },
+        "conditionOnReturn": { "type": "string", "maxLength": 60 },
+        "confirmedReceived": { "type": "boolean" },
+        "receivedByUid": { "type": "string", "maxLength": 128 },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["id", "voucherNumber", "returnDate", "confirmedReceived", "receivedByUid"]
+    },
+    "AssetTransfer": {
+      "title": "AssetTransfer",
+      "description": "سجل نقل عهدة جهاز بين الشعب والوحدات",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "deviceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "inventoryNumber": { "type": "string", "maxLength": 50 },
+        "fromDepartmentId": { "type": "string", "maxLength": 128 },
+        "toDepartmentId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "toUnitId": { "type": "string", "maxLength": 128 },
+        "newRecipientName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "transferDate": { "type": "string", "maxLength": 30 },
+        "reason": { "type": "string", "maxLength": 400 },
+        "executedByUid": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "deviceId", "toDepartmentId", "newRecipientName", "transferDate", "executedByUid"]
+    },
+    "StockMovement": {
+      "title": "StockMovement",
+      "description": "سجل مركزي غير قابل للتعديل لحركات الأجهزة والمواد",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "movementNumber": { "type": "string", "minLength": 2, "maxLength": 50 },
+        "type": {
+          "type": "string",
+          "enum": [
+            "ENTRY",
+            "ISSUE",
+            "RETURN",
+            "TRANSFER",
+            "SEND_TO_MAINTENANCE",
+            "RECEIVE_FROM_MAINTENANCE",
+            "ADJUSTMENT",
+            "ARCHIVE"
+          ]
+        },
+        "inventoryCode": { "type": "string", "maxLength": 50 },
+        "assetName": { "type": "string", "maxLength": 150 },
+        "previousLocation": { "type": "string", "maxLength": 150 },
+        "newLocation": { "type": "string", "maxLength": 150 },
+        "recipientName": { "type": "string", "maxLength": 120 },
+        "voucherNumber": { "type": "string", "maxLength": 50 },
+        "performedByUid": { "type": "string", "maxLength": 128 },
+        "performedByName": { "type": "string", "maxLength": 120 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "movementNumber", "type", "inventoryCode", "assetName", "performedByUid"]
+    },
+    "StockAdjustment": {
+      "title": "StockAdjustment",
+      "description": "تسوية رصيد مادة استهلاكية",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "itemId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "previousQuantity": { "type": "number" },
+        "newQuantity": { "type": "number" },
+        "reason": { "type": "string", "maxLength": 400 },
+        "approvedByUid": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "itemId", "previousQuantity", "newQuantity", "approvedByUid"]
+    },
+    "InventorySession": {
+      "title": "InventorySession",
+      "description": "جلسة جرد مخزني إلكتروني",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 150 },
+        "auditDate": { "type": "string", "maxLength": 30 },
+        "scope": { "type": "string", "enum": ["FULL", "CATEGORY", "LOCATION"] },
+        "status": { "type": "string", "enum": ["IN_PROGRESS", "PENDING_APPROVAL", "APPROVED"] },
+        "createdByUid": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "title", "auditDate", "scope", "status", "createdByUid"]
+    },
+    "InventoryResult": {
+      "title": "InventoryResult",
+      "description": "نتيجة فحص جهاز ضمن جلسة جرد",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "sessionId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "inventoryNumber": { "type": "string", "maxLength": 50 },
+        "finding": { "type": "string", "enum": ["FOUND", "MISSING", "WRONG_LOCATION", "UNREGISTERED"] },
+        "scannedByUid": { "type": "string", "maxLength": 128 },
+        "notes": { "type": "string", "maxLength": 400 }
+      },
+      "required": ["id", "sessionId", "inventoryNumber", "finding", "scannedByUid"]
+    },
+    "MaintenanceRecord": {
+      "title": "MaintenanceRecord",
+      "description": "سجل صيانة جهاز تقني",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "deviceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "inventoryCode": { "type": "string", "maxLength": 50 },
+        "deviceName": { "type": "string", "maxLength": 150 },
+        "faultType": { "type": "string", "maxLength": 120 },
+        "problemDescription": { "type": "string", "maxLength": 600 },
+        "sentDate": { "type": "string", "maxLength": 30 },
+        "assignedUnit": { "type": "string", "maxLength": 150 },
+        "status": {
+          "type": "string",
+          "enum": ["NEEDS_MAINTENANCE", "IN_PROGRESS", "COMPLETED", "UNREPAIRABLE"]
+        },
+        "completedDate": { "type": "string", "maxLength": 30 },
+        "cost": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["id", "deviceId", "inventoryCode", "deviceName", "faultType", "status"]
+    },
+    "BarcodeIndexEntry": {
+      "title": "BarcodeIndexEntry",
+      "description": "فهرس لمنع تكرار أرقام الجرد والباركود وQR",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "minLength": 2, "maxLength": 64 },
+        "targetType": { "type": "string", "enum": ["DEVICE", "CONSUMABLE"] },
+        "targetId": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "required": ["code", "targetType", "targetId"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "سجل تدقيق أمني غير قابل للتعديل أو الحذف",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "actorUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "actorEmail": { "type": "string", "maxLength": 160 },
+        "action": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "targetCollection": { "type": "string", "maxLength": 60 },
+        "targetId": { "type": "string", "maxLength": 128 },
+        "details": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "actorUid", "action"]
+    },
+    "NotificationItem": {
+      "title": "NotificationItem",
+      "description": "إشعار داخلي حول الأرصدة والصيانة والحركات",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 140 },
+        "description": { "type": "string", "maxLength": 500 },
+        "severity": { "type": "string", "enum": ["info", "warning", "critical"] },
+        "read": { "type": "boolean" },
+        "targetRoute": { "type": "string", "maxLength": 50 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "description", "severity", "read"]
+    },
+    "SystemSettings": {
+      "title": "SystemSettings",
+      "description": "إعدادات النظام الرسمية وسياسات الجلسة والنسخ الاحتياطي",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "organizationName": { "type": "string", "maxLength": 160 },
+        "departmentName": { "type": "string", "maxLength": 160 },
+        "divisionName": { "type": "string", "maxLength": 160 },
+        "sessionTimeoutMinutes": { "type": "number" },
+        "inventoryPrefix": { "type": "string", "maxLength": 20 },
+        "lowStockAlertEnabled": { "type": "boolean" },
+        "autoBackupReminderDays": { "type": "number" },
+        "lastBackupAt": { "type": "string", "maxLength": 40 },
+        "lastBackupBy": { "type": "string", "maxLength": 120 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "organizationName", "sessionTimeoutMinutes"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "حسابات وصلاحيات المستخدمين المعتمدين"
+    },
+    "/userInvites/{inviteId}": {
+      "schema": { "$ref": "#/entities/UserInvite" },
+      "description": "دعوات التفعيل المسبقة المعتمدة من مدير النظام"
+    },
+    "/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/Category" },
+      "description": "تصنيفات الأجهزة والمعدات"
+    },
+    "/items/{itemId}": {
+      "schema": { "$ref": "#/entities/ConsumableItem" },
+      "description": "دليل المواد الكمية والاستهلاكية"
+    },
+    "/devices/{deviceId}": {
+      "schema": { "$ref": "#/entities/Device" },
+      "description": "دليل الأجهزة الفردية"
+    },
+    "/departments/{departmentId}": {
+      "schema": { "$ref": "#/entities/Department" },
+      "description": "الشعب المستفيدة"
+    },
+    "/units/{unitId}": {
+      "schema": { "$ref": "#/entities/Unit" },
+      "description": "الوحدات التابعة للشعب"
+    },
+    "/stockBalances/{itemId}": {
+      "schema": { "$ref": "#/entities/StockBalance" },
+      "description": "أرصدة المواد الكمية"
+    },
+    "/stockEntries/{entryId}": {
+      "schema": { "$ref": "#/entities/StockEntry" },
+      "description": "سندات الإدخال للمخزن"
+    },
+    "/stockIssues/{issueId}": {
+      "schema": { "$ref": "#/entities/StockIssue" },
+      "description": "سندات الصرف للشعب والوحدات"
+    },
+    "/stockReturns/{returnId}": {
+      "schema": { "$ref": "#/entities/StockReturn" },
+      "description": "سندات الإرجاع للمخزن"
+    },
+    "/assetTransfers/{transferId}": {
+      "schema": { "$ref": "#/entities/AssetTransfer" },
+      "description": "سجلات نقل الأجهزة بين الجهات"
+    },
+    "/stockMovements/{movementId}": {
+      "schema": { "$ref": "#/entities/StockMovement" },
+      "description": "السجل المركزي للحركات المخزنية"
+    },
+    "/stockAdjustments/{adjustmentId}": {
+      "schema": { "$ref": "#/entities/StockAdjustment" },
+      "description": "تسويات أرصدة المواد"
+    },
+    "/inventorySessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/InventorySession" },
+      "description": "جلسات الجرد المخزني"
+    },
+    "/inventoryResults/{resultId}": {
+      "schema": { "$ref": "#/entities/InventoryResult" },
+      "description": "نتائج فحص الأجهزة أثناء الجرد"
+    },
+    "/maintenanceRecords/{recordId}": {
+      "schema": { "$ref": "#/entities/MaintenanceRecord" },
+      "description": "سجلات صيانة الأجهزة"
+    },
+    "/barcodeIndex/{code}": {
+      "schema": { "$ref": "#/entities/BarcodeIndexEntry" },
+      "description": "فهرس منع تكرار الباركود وأرقام الجرد"
+    },
+    "/auditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "سجل التدقيق الأمني"
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/NotificationItem" },
+      "description": "الإشعارات الداخلية للنظام"
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/SystemSettings" },
+      "description": "إعدادات النظام العامة"
+    }
+  }
+}

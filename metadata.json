@@ -1,0 +1,6 @@
+{
+  "name": "Sayed Mart - نظام إدارة وجرد الأجهزة والمعدات",
+  "description": "نظام إدارة وجرد الأجهزة والمعدات والموجودات التقنية لشعبة السيطرة والإنترنت في مجمع سيد الشهداء (عليه السلام) الخدمي — الأمانة العامة للعتبة الحسينية المقدسة",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
